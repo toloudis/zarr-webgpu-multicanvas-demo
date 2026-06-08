@@ -1,3 +1,5 @@
+import type { LoadedSlice, RenderStats } from "./types";
+
 const SHADER = /* wgsl */ `
 struct VertexOut {
   @builtin(position) position: vec4f,
@@ -33,8 +35,37 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
 }
 `;
 
-export async function createImageGridRenderer(gridElement, onStats) {
-  if (!("gpu" in navigator)) {
+type StatsCallback = (stats: RenderStats) => void;
+
+interface TileText {
+  title: string;
+  subtitle: string;
+}
+
+interface TileHandle {
+  id: number;
+}
+
+interface ImageTile {
+  id: number;
+  element: HTMLElement;
+  canvas: HTMLCanvasElement;
+  context: GPUCanvasContext;
+  titleElement: HTMLHeadingElement;
+  subtitleElement: HTMLParagraphElement;
+  stateElement: HTMLSpanElement;
+  bindGroup: GPUBindGroup | null;
+  texture: GPUTexture | null;
+  ready: boolean;
+}
+
+type UploadableImage = Pick<LoadedSlice, "rgba" | "width" | "height">;
+
+export async function createImageGridRenderer(
+  gridElement: HTMLElement,
+  onStats?: StatsCallback,
+): Promise<ImageGridRenderer> {
+  if (!navigator.gpu) {
     throw new Error("WebGPU is not available in this browser.");
   }
 
@@ -47,17 +78,26 @@ export async function createImageGridRenderer(gridElement, onStats) {
   return new ImageGridRenderer(device, gridElement, onStats);
 }
 
-class ImageGridRenderer {
-  constructor(device, gridElement, onStats) {
+export class ImageGridRenderer {
+  private readonly device: GPUDevice;
+  private readonly gridElement: HTMLElement;
+  private readonly onStats?: StatsCallback;
+  private readonly presentationFormat: GPUTextureFormat;
+  private readonly pipeline: GPURenderPipeline;
+  private readonly sampler: GPUSampler;
+  private readonly resizeObserver: ResizeObserver;
+  private readonly intersectionObserver: IntersectionObserver;
+  private readonly tiles = new Map<number, ImageTile>();
+  private readonly canvasToTile = new Map<HTMLCanvasElement, ImageTile>();
+  private readonly visibleCanvases = new Set<HTMLCanvasElement>();
+  private nextTileId = 1;
+  private rafId = 0;
+
+  constructor(device: GPUDevice, gridElement: HTMLElement, onStats?: StatsCallback) {
     this.device = device;
     this.gridElement = gridElement;
     this.onStats = onStats;
     this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
-    this.tiles = new Map();
-    this.canvasToTile = new Map();
-    this.visibleCanvases = new Set();
-    this.nextTileId = 1;
-    this.rafId = 0;
 
     this.pipeline = device.createRenderPipeline({
       label: "image blit pipeline",
@@ -82,17 +122,6 @@ class ImageGridRenderer {
       addressModeV: "clamp-to-edge",
     });
 
-    this.renderPassDescriptor = {
-      label: "canvas image pass",
-      colorAttachments: [
-        {
-          clearValue: [0.04, 0.045, 0.052, 1],
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-    };
-
     this.resizeObserver = new ResizeObserver((entries) => this.onResize(entries));
     this.intersectionObserver = new IntersectionObserver((entries) => this.onIntersection(entries), {
       root: null,
@@ -100,7 +129,7 @@ class ImageGridRenderer {
     });
   }
 
-  addTile({ title, subtitle }) {
+  addTile({ title, subtitle }: TileText): TileHandle {
     const id = this.nextTileId++;
     const tileElement = document.createElement("article");
     tileElement.className = "image-tile is-loading";
@@ -123,14 +152,18 @@ class ImageGridRenderer {
     tileElement.append(canvas, header);
     this.gridElement.append(tileElement);
 
-    const context = canvas.getContext("webgpu");
+    const context = canvas.getContext("webgpu") as GPUCanvasContext | null;
+    if (!context) {
+      throw new Error("Could not create a WebGPU canvas context.");
+    }
+
     context.configure({
       device: this.device,
       format: this.presentationFormat,
       alphaMode: "opaque",
     });
 
-    const tile = {
+    const tile: ImageTile = {
       id,
       element: tileElement,
       canvas,
@@ -152,14 +185,14 @@ class ImageGridRenderer {
     return { id };
   }
 
-  updateTile(id, { title, subtitle }) {
+  updateTile(id: number, { title, subtitle }: Partial<TileText>): void {
     const tile = this.tiles.get(id);
     if (!tile) return;
     if (title) tile.titleElement.textContent = title;
     if (subtitle) tile.subtitleElement.textContent = subtitle;
   }
 
-  uploadTile(id, image) {
+  uploadTile(id: number, image: UploadableImage): void {
     const tile = this.tiles.get(id);
     if (!tile) return;
 
@@ -199,7 +232,7 @@ class ImageGridRenderer {
     this.requestRender();
   }
 
-  setTileError(id, message) {
+  setTileError(id: number, message: string): void {
     const tile = this.tiles.get(id);
     if (!tile) return;
     tile.ready = false;
@@ -209,7 +242,7 @@ class ImageGridRenderer {
     tile.subtitleElement.textContent = message;
   }
 
-  clear() {
+  clear(): void {
     for (const tile of this.tiles.values()) {
       this.resizeObserver.unobserve(tile.canvas);
       this.intersectionObserver.unobserve(tile.canvas);
@@ -223,11 +256,13 @@ class ImageGridRenderer {
     this.requestRender();
   }
 
-  onResize(entries) {
+  private onResize(entries: ResizeObserverEntry[]): void {
     const ratio = window.devicePixelRatio || 1;
     for (const entry of entries) {
       const canvas = entry.target;
-      const box = entry.contentBoxSize?.[0];
+      if (!(canvas instanceof HTMLCanvasElement)) continue;
+
+      const box = entry.contentBoxSize[0];
       const cssWidth = box?.inlineSize ?? canvas.clientWidth;
       const cssHeight = box?.blockSize ?? canvas.clientHeight;
       const width = Math.max(1, Math.min(Math.round(cssWidth * ratio), this.device.limits.maxTextureDimension2D));
@@ -241,8 +276,10 @@ class ImageGridRenderer {
     this.requestRender();
   }
 
-  onIntersection(entries) {
+  private onIntersection(entries: IntersectionObserverEntry[]): void {
     for (const { target, isIntersecting } of entries) {
+      if (!(target instanceof HTMLCanvasElement)) continue;
+
       if (isIntersecting) {
         this.visibleCanvases.add(target);
       } else {
@@ -252,12 +289,12 @@ class ImageGridRenderer {
     this.requestRender();
   }
 
-  requestRender() {
+  private requestRender(): void {
     if (this.rafId) return;
     this.rafId = requestAnimationFrame(() => this.render());
   }
 
-  render() {
+  private render(): void {
     this.rafId = 0;
     let rendered = 0;
 
@@ -272,11 +309,17 @@ class ImageGridRenderer {
       const tile = this.canvasToTile.get(canvas);
       if (!tile?.ready || !tile.bindGroup || canvas.width === 0 || canvas.height === 0) continue;
 
-      this.renderPassDescriptor.colorAttachments[0].view = tile.context
-        .getCurrentTexture()
-        .createView();
-
-      const pass = encoder.beginRenderPass(this.renderPassDescriptor);
+      const pass = encoder.beginRenderPass({
+        label: "canvas image pass",
+        colorAttachments: [
+          {
+            view: tile.context.getCurrentTexture().createView(),
+            clearValue: [0.04, 0.045, 0.052, 1],
+            loadOp: "clear",
+            storeOp: "store",
+          },
+        ],
+      });
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, tile.bindGroup);
       pass.draw(3);
@@ -292,11 +335,11 @@ class ImageGridRenderer {
   }
 }
 
-function alignTo(value, alignment) {
+function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
-function copyWithAlignedRows(source, width, height, bytesPerRow) {
+function copyWithAlignedRows(source: Uint8Array, width: number, height: number, bytesPerRow: number): Uint8Array {
   const tightBytesPerRow = width * 4;
   const aligned = new Uint8Array(bytesPerRow * height);
 

@@ -16,9 +16,9 @@ Open the local Vite URL. The default list loads the included fixtures under `pub
 
 ## Static URL List
 
-Edit `src/zarrSources.js`:
+Edit `src/zarrSources.ts`:
 
-```js
+```ts
 export const ZARR_IMAGE_SOURCES = [
   { label: "Example", url: "https://example.org/image.zarr", arrayPath: "0" },
 ];
