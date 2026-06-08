@@ -1,225 +1,160 @@
 import type { ZarrImageSource } from "./types";
 
 export const ZARR_IMAGE_SOURCES = [
-
   {
-    label: "20260403_3500008548_085f0c14ec5844328a32ac6b6a81083f.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/f70/45a/9f2/851/d59/f79/241/d34/ab4/fb2/4c/20260403_3500008548_085f0c14ec5844328a32ac6b6a81083f.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P67-G2).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/83b/79f/3a3/0ef/562/c89/347/c63/2b0/b0e/b3/3500007507_20250418_20X_Timelapse-01(P67-G2).ome.zarr",
   },
   {
-    label: "20251125_3500008048_22d05231d3384063a38793b2e446d637.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/425/ca4/715/0f9/1e5/388/24e/333/585/431/8e/20251125_3500008048_22d05231d3384063a38793b2e446d637.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P66-G2).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/466/78b/965/bfa/482/95a/a43/c79/013/0b4/45/3500007507_20250418_20X_Timelapse-01(P66-G2).ome.zarr",
   },
   {
-    label: "20251125_3500008048_21de855d2bee4c38b2ce6556877615c0.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/45a/300/02c/b9a/20e/4fb/d42/e98/868/4b8/a4/20251125_3500008048_21de855d2bee4c38b2ce6556877615c0.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P65-G3).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/8be/f68/830/0e7/fde/f1a/74c/48a/5c9/090/00/3500007507_20250418_20X_Timelapse-01(P65-G3).ome.zarr",
   },
   {
-    label: "20251125_3500008048_1e95b6e8c9d941dcaa37792d186d21a3.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/0a2/173/ffd/ba9/f5d/f6b/644/60c/90e/c3f/ea/20251125_3500008048_1e95b6e8c9d941dcaa37792d186d21a3.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P64-G4).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/725/fbb/c38/46b/e92/268/648/440/df0/b94/d8/3500007507_20250418_20X_Timelapse-01(P64-G4).ome.zarr",
   },
   {
-    label: "20251125_3500008048_187a8c63cc044b018052d83bd654e4e2.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/e35/75b/244/d8e/a5b/14b/24f/c28/cd9/12e/e9/20251125_3500008048_187a8c63cc044b018052d83bd654e4e2.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P63-G4).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/e83/e9e/6e9/280/c85/71b/f47/f04/697/89a/93/3500007507_20250418_20X_Timelapse-01(P63-G4).ome.zarr",
   },
   {
-    label: "20251125_3500008048_146552718ee24b849e404dd21697a1ad.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/2b7/0b3/211/131/09f/ea8/f45/1cd/caa/df8/5f/20251125_3500008048_146552718ee24b849e404dd21697a1ad.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P62-G4).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/052/d56/601/424/6e9/b5b/b47/6d4/303/7f7/a0/3500007507_20250418_20X_Timelapse-01(P62-G4).ome.zarr",
   },
   {
-    label: "20251125_3500008048_12018126979d4b61aefbd99cdc0dbda2.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/dea/d11/41b/c2b/3b7/949/848/8c5/611/d62/6f/20251125_3500008048_12018126979d4b61aefbd99cdc0dbda2.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P61-G5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/9d4/18a/10d/cc7/52b/b8a/143/109/580/e89/2c/3500007507_20250418_20X_Timelapse-01(P61-G5).ome.zarr",
   },
   {
-    label: "20251125_3500008048_08324be86e0c493a8b3885be943753c3.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/631/e47/547/8c2/542/e1b/04f/017/266/d7c/a1/20251125_3500008048_08324be86e0c493a8b3885be943753c3.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P60-G5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/682/029/0cd/320/d34/668/842/6db/0d3/dc7/a6/3500007507_20250418_20X_Timelapse-01(P60-G5).ome.zarr",
   },
   {
-    label: "20251125_3500008048_07a6ef8315e84a23ad0067b7efb01494.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/bc9/72f/124/e87/a68/c68/b4b/6cb/836/c54/3c/20251125_3500008048_07a6ef8315e84a23ad0067b7efb01494.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P6-C2).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/cc1/783/842/b9b/44b/6a8/c4e/a03/3d0/120/f3/3500007507_20250418_20X_Timelapse-01(P6-C2).ome.zarr",
   },
   {
-    label: "20251125_3500008048_0206348d79c9429cba311d4a27c757c5.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/6d7/587/717/944/e44/33a/b43/0fa/cd1/ed2/4c/20251125_3500008048_0206348d79c9429cba311d4a27c757c5.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P59-G5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/fdf/b7c/340/274/bc7/3cb/540/7c1/a49/2fe/59/3500007507_20250418_20X_Timelapse-01(P59-G5).ome.zarr",
   },
   {
-    label: "20251104_3500008082_fc82fa555d9b4f3888661e62111c0c81.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/bc4/740/91c/a99/2ee/8da/d46/985/a79/064/34/20251104_3500008082_fc82fa555d9b4f3888661e62111c0c81.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P58-G6).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/330/220/782/bf8/6a5/cc8/f47/7f9/e4f/8fc/55/3500007507_20250418_20X_Timelapse-01(P58-G6).ome.zarr",
   },
   {
-    label: "20251104_3500008082_ee5afe007549485d844a76939d2a39bf.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/f71/6c2/20f/981/0db/20b/d4d/b4c/565/5a7/90/20251104_3500008082_ee5afe007549485d844a76939d2a39bf.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P57-G6).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/852/cd5/a93/c56/b5d/e48/f44/3e3/e23/f42/7f/3500007507_20250418_20X_Timelapse-01(P57-G6).ome.zarr",
   },
   {
-    label: "20251104_3500008082_ef9c59ae3beb4df499d8a0928ca4f27b.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/440/cdc/f5d/95e/8e7/abb/d4c/8c2/a2b/aa7/6e/20251104_3500008082_ef9c59ae3beb4df499d8a0928ca4f27b.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P56-G7).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/9df/dc7/ff9/30e/9a4/4eb/f4e/9a6/1d0/485/dc/3500007507_20250418_20X_Timelapse-01(P56-G7).ome.zarr",
   },
   {
-    label: "20251104_3500008082_e0b0fd6a28654173829f0d253479c045.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/a4b/3e0/404/87a/939/02b/946/7fe/2b3/9d9/d7/20251104_3500008082_e0b0fd6a28654173829f0d253479c045.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P55-G7).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/706/965/08f/a2f/b4c/80a/a43/169/c32/b8a/09/3500007507_20250418_20X_Timelapse-01(P55-G7).ome.zarr",
   },
   {
-    label: "20251104_3500008082_da4a020012da418aa252a39f9d30f44c.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/927/b81/ae5/d18/d7c/d9a/54b/330/554/eee/03/20251104_3500008082_da4a020012da418aa252a39f9d30f44c.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P54-G7).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/915/7e6/e19/8f4/030/9b9/240/48f/538/ba7/2d/3500007507_20250418_20X_Timelapse-01(P54-G7).ome.zarr",
   },
   {
-    label: "20251104_3500008082_d9e9fa7f840448708abc53271f5e9409.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/e2b/567/8e0/239/983/e58/141/45a/865/1d8/b5/20251104_3500008082_d9e9fa7f840448708abc53271f5e9409.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P53-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/3cd/a07/b82/7ce/9dc/afa/342/a0d/f01/ed6/3e/3500007507_20250418_20X_Timelapse-01(P53-G8).ome.zarr",
   },
   {
-    label: "20251104_3500008082_d772b504252b4ef38dfd296097f5d415.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/75f/506/283/d64/03a/1eb/04b/86a/6de/520/2a/20251104_3500008082_d772b504252b4ef38dfd296097f5d415.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P9-B5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/8cb/cfa/a8b/930/58d/599/944/a25/5bf/6df/63/3500007450_20250606_20x_Timelapse(P9-B5).ome.zarr",
   },
   {
-    label: "20251104_3500008082_cb301f036b5241d68dde7205cc6390a7.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/ef0/b79/637/41d/846/09a/04f/463/19f/12b/39/20251104_3500008082_cb301f036b5241d68dde7205cc6390a7.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P52-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/aff/2f7/5fc/b69/174/faa/042/d61/a75/80d/32/3500007507_20250418_20X_Timelapse-01(P52-G8).ome.zarr",
   },
   {
-    label: "20251104_3500008082_c8e85177426b4475a7b5924e0f3b034b.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/256/90c/544/9d7/bda/ff8/94e/d0c/8ad/4b6/a3/20251104_3500008082_c8e85177426b4475a7b5924e0f3b034b.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P8-B5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/9ce/045/b01/777/fff/0fa/64c/db8/1fc/9cd/2e/3500007450_20250606_20x_Timelapse(P8-B5).ome.zarr",
   },
   {
-    label: "20251104_3500008082_be9dd7425e1b406697a4df39bf9a3a00.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/b85/01e/96d/167/18c/efa/54b/ad3/1d2/066/c9/20251104_3500008082_be9dd7425e1b406697a4df39bf9a3a00.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P51-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/206/268/a9a/248/4e6/6c9/b4f/241/fe9/fcc/be/3500007507_20250418_20X_Timelapse-01(P51-G8).ome.zarr",
   },
   {
-    label: "20251104_3500008082_b736d51c67a646f8a267267af123af06.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/69c/53a/55c/dd1/bdd/c89/549/9cd/3d1/997/be/20251104_3500008082_b736d51c67a646f8a267267af123af06.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P72-E11).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/80e/a40/e38/f6d/91a/418/b47/888/b2e/7d4/d6/3500007450_20250606_20x_Timelapse(P72-E11).ome.zarr",
   },
   {
-    label: "20251104_3500008082_bb36b8ec38dd406fbe5071f20f08edb1.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/90a/ca1/333/8ad/8f1/08b/04f/d25/828/ee9/5f/20251104_3500008082_bb36b8ec38dd406fbe5071f20f08edb1.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P71-E11).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/cf2/928/dbe/f5d/d08/b09/b4e/534/9a2/529/39/3500007450_20250606_20x_Timelapse(P71-E11).ome.zarr",
   },
   {
-    label: "20251104_3500008082_b2a75166bb30460eb4dcf8a1838e08d8.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/3fb/23a/af8/298/3c7/a38/c4c/397/19b/bd3/c4/20251104_3500008082_b2a75166bb30460eb4dcf8a1838e08d8.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P50-G9).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/775/688/ade/d61/411/ae8/b4e/b92/744/ac4/3e/3500007507_20250418_20X_Timelapse-01(P50-G9).ome.zarr",
   },
   {
-    label: "20251104_3500008082_a3e7f95280f548618044f5a2aaf57e12.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/885/e5f/74b/88c/183/41a/045/8b2/514/d9f/c8/20251104_3500008082_a3e7f95280f548618044f5a2aaf57e12.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P70-E11).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/026/bf1/68f/7c9/64a/318/745/7a3/9df/c8e/9c/3500007450_20250606_20x_Timelapse(P70-E11).ome.zarr",
   },
   {
-    label: "20251104_3500008082_9bd605cc137946199efb4d27e3efad9a.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/f0f/dde/81c/754/95d/4fa/24c/798/cb5/f80/52/20251104_3500008082_9bd605cc137946199efb4d27e3efad9a.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P5-C2).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/ee5/175/9f7/844/1b7/a08/74f/dc8/69c/1ef/f9/3500007507_20250418_20X_Timelapse-01(P5-C2).ome.zarr",
   },
   {
-    label: "20251104_3500008082_9d50c7edefad490e8c006717410cd457.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/3e5/8aa/c65/22d/467/a79/141/1cd/fa5/69b/6e/20251104_3500008082_9d50c7edefad490e8c006717410cd457.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P49-G9).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/6a8/b9a/270/c1c/8c9/d49/141/277/8a6/c15/75/3500007507_20250418_20X_Timelapse-01(P49-G9).ome.zarr",
   },
   {
-    label: "20251104_3500008082_989e9ff7b99e4be9856b6c4b5fcdf690.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/eb5/eeb/009/6c5/da4/99a/a48/ea7/65a/e54/27/20251104_3500008082_989e9ff7b99e4be9856b6c4b5fcdf690.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P7-B5).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/d20/74c/be0/d27/27b/8b9/343/1d5/f0a/c4e/11/3500007450_20250606_20x_Timelapse(P7-B5).ome.zarr",
   },
   {
-    label: "20251104_3500008082_97418814fef34d0cad6b8df3c427389d.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/bed/62b/88e/299/be6/e28/44a/33c/137/516/2c/20251104_3500008082_97418814fef34d0cad6b8df3c427389d.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P48-G9).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/0b0/f9f/d4c/757/081/ea8/34a/181/cec/bf1/eb/3500007507_20250418_20X_Timelapse-01(P48-G9).ome.zarr",
   },
   {
-    label: "20251104_3500008082_95b7c724544f4821a0ce6f21be924387.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/1f7/f5b/da1/852/c60/f9b/f49/cde/402/6e6/33/20251104_3500008082_95b7c724544f4821a0ce6f21be924387.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P69-D10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/eb6/2de/4d1/ca0/958/7ba/a44/ca3/4af/2b7/77/3500007450_20250606_20x_Timelapse(P69-D10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_89436f225fcb4e0eac1bfa9257ac055d.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/87a/009/835/ce9/97f/a2b/d47/400/1f6/b57/02/20251104_3500008082_89436f225fcb4e0eac1bfa9257ac055d.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P47-G10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/d4a/6c4/a70/db8/9fe/cba/447/5ca/478/1bb/cd/3500007507_20250418_20X_Timelapse-01(P47-G10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_789f5ce388c44e20880962d3213745ae.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/0d9/db5/aff/188/ba4/569/249/8db/0d8/e73/7b/20251104_3500008082_789f5ce388c44e20880962d3213745ae.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P68-D10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/0f8/d97/e7f/6cf/8e5/ebb/341/0a4/c59/e1c/02/3500007450_20250606_20x_Timelapse(P68-D10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_83d6d53c80284e4f975f8d133b0356f1.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/507/aab/1ac/4e2/3c2/3bb/148/88d/f47/4df/12/20251104_3500008082_83d6d53c80284e4f975f8d133b0356f1.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P46-G10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/7c1/8ea/dcb/63b/793/6d8/74a/edc/02f/31a/d4/3500007507_20250418_20X_Timelapse-01(P46-G10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_755b88214042427295bf8121fa9275af.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/1ac/a3a/3e0/041/39a/a6a/64b/3e6/703/844/b4/20251104_3500008082_755b88214042427295bf8121fa9275af.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P67-D10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/b6c/296/ae0/7ec/ff2/b2b/24e/048/079/de7/7c/3500007450_20250606_20x_Timelapse(P67-D10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_754ecea684d645dba389df1b51aca326.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/da0/343/0a3/0ce/87a/10b/64f/92b/a49/c6b/a5/20251104_3500008082_754ecea684d645dba389df1b51aca326.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P45-G10).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/d93/74e/0aa/d5c/5d4/359/c43/6ea/9e5/58c/ee/3500007507_20250418_20X_Timelapse-01(P45-G10).ome.zarr",
   },
   {
-    label: "20251104_3500008082_73ce2165151e42a286b165be0764b5e0.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/d23/1cd/c63/5cc/460/33b/542/0f7/175/527/d5/20251104_3500008082_73ce2165151e42a286b165be0764b5e0.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P66-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/3a9/fc6/f9d/c2b/cea/85b/e4d/8be/39e/d38/3f/3500007450_20250606_20x_Timelapse(P66-G8).ome.zarr",
   },
   {
-    label: "20251104_3500008082_6bcb7996286744f7b8f79c858719550d.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/de4/4a9/c2f/167/3ae/78a/d4b/56b/43d/f92/ea/20251104_3500008082_6bcb7996286744f7b8f79c858719550d.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P44-G11).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/b66/7cf/072/c56/298/3c8/d4c/d46/063/d4f/29/3500007507_20250418_20X_Timelapse-01(P44-G11).ome.zarr",
   },
   {
-    label: "20251104_3500008082_6a961a5cfdfa49bc9bb6f51ed0af58c6.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/282/7c0/965/889/2c7/65a/a41/392/d02/302/8c/20251104_3500008082_6a961a5cfdfa49bc9bb6f51ed0af58c6.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P65-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/b12/2dc/79c/0f8/e2f/9e9/04e/5ba/12d/417/ae/3500007450_20250606_20x_Timelapse(P65-G8).ome.zarr",
   },
   {
-    label: "20251104_3500008082_6814381b841b495eb98b0e739f3e8bc6.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/d1a/c0b/ecb/ada/020/d78/e42/5c7/b3b/ccb/bb/20251104_3500008082_6814381b841b495eb98b0e739f3e8bc6.ome.zarr",
+    label: "3500007507_20250418_20X_Timelapse-01(P43-G11).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/22d/93b/015/707/9b0/049/c40/799/e12/5b7/8d/3500007507_20250418_20X_Timelapse-01(P43-G11).ome.zarr",
   },
   {
-    label: "20251104_3500008082_67641376a90f421fad6bb713e0c16070.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/e7d/088/74e/669/98c/03b/64d/e6b/3aa/5c5/1e/20251104_3500008082_67641376a90f421fad6bb713e0c16070.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_6081e8854e574bc58c6928b421e86995.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/4ff/044/c66/2aa/552/1c9/947/fdd/bcd/a6d/3f/20251104_3500008082_6081e8854e574bc58c6928b421e86995.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_57a6787bf00f4f42b9e36de848a98409.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/7ca/559/7d5/209/508/aab/444/c69/6ae/cdd/01/20251104_3500008082_57a6787bf00f4f42b9e36de848a98409.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_47986f30f0f8472199a3606501952f47.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/be0/e5a/204/eb6/3a8/af8/942/53d/e55/29c/7f/20251104_3500008082_47986f30f0f8472199a3606501952f47.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_46d7cf03956249c48711a47dd30bda4a.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/ee1/6d3/dd0/1d1/3dc/979/74c/a74/676/dba/62/20251104_3500008082_46d7cf03956249c48711a47dd30bda4a.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_3dead94fa3c547e5bfe9e6c007178b1e.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/de9/e24/62e/64b/baa/1ba/54f/6a7/9d8/ca0/0a/20251104_3500008082_3dead94fa3c547e5bfe9e6c007178b1e.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_2b29ad4f030747bda58ee19d2ca9cadc.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/806/ada/8bc/ac9/66a/cfb/64c/d51/c8e/517/b9/20251104_3500008082_2b29ad4f030747bda58ee19d2ca9cadc.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_3666e89b4e67438d8cf44dd04359fd31.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/64e/172/a2a/c3d/ce6/cb9/e4b/2be/74a/992/18/20251104_3500008082_3666e89b4e67438d8cf44dd04359fd31.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_1772b43bd6ef447795244755aec7d994.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/5c5/7e9/c69/eb4/c35/1fa/24b/251/666/184/7a/20251104_3500008082_1772b43bd6ef447795244755aec7d994.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_246ca22d0ad24d838370d6949e114604.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/07e/caf/a58/e9a/242/3c9/84a/ede/d40/303/3c/20251104_3500008082_246ca22d0ad24d838370d6949e114604.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_1c1052843bdf4c3a8f6bee50921f517b.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/b88/d3a/e44/de5/104/56b/24e/ac9/1cb/a1d/4d/20251104_3500008082_1c1052843bdf4c3a8f6bee50921f517b.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_1e7414f6288941ea8034d9fb7bf96534.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/9e7/990/636/8d4/897/e0b/a49/03c/57d/210/c1/20251104_3500008082_1e7414f6288941ea8034d9fb7bf96534.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_10c1348e5061418380d68b2655e078b8.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/fc7/da9/151/f63/8d5/6fb/246/6df/6f5/413/28/20251104_3500008082_10c1348e5061418380d68b2655e078b8.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_09868f09432c4fb68817d8dd89ba1dd1.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/4c6/697/3ff/3b2/761/bab/347/ff1/f0b/810/ba/20251104_3500008082_09868f09432c4fb68817d8dd89ba1dd1.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_0024a461eac34b7396df30ebd87a5303.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/62b/a00/cf7/eac/b88/48a/f42/bcc/9de/50d/eb/20251104_3500008082_0024a461eac34b7396df30ebd87a5303.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_0b8c3f6d66894e0080f2dddb8f6b0413.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/7ca/156/9d1/9a0/c40/ac9/f40/51b/416/308/ea/20251104_3500008082_0b8c3f6d66894e0080f2dddb8f6b0413.ome.zarr",
-  },
-  {
-    label: "20251104_3500008082_0a0a139e89fe49018ce47ea6521c29f5.ome.zarr",
-    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/3e4/c78/e70/d3b/6c3/0d8/340/81d/a71/6c5/e8/20251104_3500008082_0a0a139e89fe49018ce47ea6521c29f5.ome.zarr",
+    label: "3500007450_20250606_20x_Timelapse(P64-G8).ome.zarr",
+    url: "https://s3.us-west-2.amazonaws.com/production.files.allencell.org/0b5/6a8/d8e/107/323/69a/b42/868/475/f58/4f/3500007450_20250606_20x_Timelapse(P64-G8).ome.zarr",
   },
 ] satisfies readonly ZarrImageSource[];
