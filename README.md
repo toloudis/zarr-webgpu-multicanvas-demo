@@ -4,6 +4,8 @@ This is a small Vite app that loads 2D `Y,X` planes from a static list of `T,C,Z
 
 For grouped OME-Zarr stores, the loader inspects advertised multiscale datasets and selects the smallest `X,Y` level whose larger image dimension is still at least the resolution target. If every level is smaller than the target, it uses the largest available level.
 
+Click any rendered canvas to open that source in Vol-E. The generated Vol-E URL forwards the current global time index, the current Z slice as a normalized `slice` value, and every channel's visibility/color settings.
+
 The renderer follows the multiple-canvas pattern from WebGPU Fundamentals: one device, one configured context per canvas, a shared render pipeline, one command encoder for all visible canvases in a frame, `ResizeObserver` for backing-store sizing, and `IntersectionObserver` so off-screen canvases are skipped.
 
 ## Run
@@ -31,4 +33,5 @@ The `arrayPath` field is optional and is useful for grouped stores where the arr
 ## References
 
 - WebGPU multiple canvases: https://webgpufundamentals.org/webgpu/lessons/webgpu-multiple-canvases.html
+- Vol-E URL spec: https://github.com/allen-cell-animated/vole-app/blob/main/documentation/URL_SPEC.md
 - zarrita: https://zarrita.dev/

@@ -199,6 +199,7 @@ h1 {
   width: 100%;
   aspect-ratio: 1 / 1;
   background: #0b0f12;
+  cursor: pointer;
 }
 
 .tile-header {

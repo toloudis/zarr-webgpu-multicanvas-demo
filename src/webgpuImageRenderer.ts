@@ -36,6 +36,7 @@ fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
 `;
 
 type StatsCallback = (stats: RenderStats) => void;
+type TileClickCallback = (tileId: number) => void;
 
 interface TileText {
   title: string;
@@ -64,6 +65,7 @@ type UploadableImage = Pick<LoadedSlice, "rgba" | "width" | "height">;
 export async function createImageGridRenderer(
   gridElement: HTMLElement,
   onStats?: StatsCallback,
+  onTileClick?: TileClickCallback,
 ): Promise<ImageGridRenderer> {
   if (!navigator.gpu) {
     throw new Error("WebGPU is not available in this browser.");
@@ -75,13 +77,14 @@ export async function createImageGridRenderer(
   }
 
   const device = await adapter.requestDevice();
-  return new ImageGridRenderer(device, gridElement, onStats);
+  return new ImageGridRenderer(device, gridElement, onStats, onTileClick);
 }
 
 export class ImageGridRenderer {
   private readonly device: GPUDevice;
   private readonly gridElement: HTMLElement;
   private readonly onStats?: StatsCallback;
+  private readonly onTileClick?: TileClickCallback;
   private readonly presentationFormat: GPUTextureFormat;
   private readonly pipeline: GPURenderPipeline;
   private readonly sampler: GPUSampler;
@@ -93,10 +96,16 @@ export class ImageGridRenderer {
   private nextTileId = 1;
   private rafId = 0;
 
-  constructor(device: GPUDevice, gridElement: HTMLElement, onStats?: StatsCallback) {
+  constructor(
+    device: GPUDevice,
+    gridElement: HTMLElement,
+    onStats?: StatsCallback,
+    onTileClick?: TileClickCallback,
+  ) {
     this.device = device;
     this.gridElement = gridElement;
     this.onStats = onStats;
+    this.onTileClick = onTileClick;
     this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     this.pipeline = device.createRenderPipeline({
@@ -135,6 +144,9 @@ export class ImageGridRenderer {
     tileElement.className = "image-tile is-loading";
 
     const canvas = document.createElement("canvas");
+    canvas.title = "Open in Vol-E";
+    canvas.addEventListener("click", () => this.onTileClick?.(id));
+
     const header = document.createElement("div");
     header.className = "tile-header";
 

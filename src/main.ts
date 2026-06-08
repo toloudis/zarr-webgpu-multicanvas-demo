@@ -14,6 +14,7 @@ const DEFAULT_CHANNEL_COLORS = [
   "#64d2ff",
   "#ff9f0a",
 ];
+const VOLE_VIEWER_URL = "https://vole.allencell.org/viewer";
 
 interface LoadedImageState {
   source: ZarrImageSource;
@@ -83,9 +84,13 @@ resolutionSlider.addEventListener("input", () => {
 });
 
 async function init(): Promise<void> {
-  renderer = await createImageGridRenderer(grid, (stats) => {
-    renderStats.textContent = `${stats.rendered} rendered / ${stats.visible} visible`;
-  });
+  renderer = await createImageGridRenderer(
+    grid,
+    (stats) => {
+      renderStats.textContent = `${stats.rendered} rendered / ${stats.visible} visible`;
+    },
+    (tileId) => openTileInVole(tileId),
+  );
   statusText.textContent = "WebGPU ready.";
   renderControls();
   await loadSources();
@@ -267,6 +272,48 @@ function scheduleResolutionReload(): void {
   }, 350);
 }
 
+function openTileInVole(tileId: number): void {
+  const imageState = appState.images.find((item) => item.tileId === tileId);
+  if (!imageState?.metadata) {
+    statusText.textContent = "Image metadata is not ready yet.";
+    return;
+  }
+
+  const voleUrl = buildVoleUrl(imageState.metadata);
+  const openedWindow = window.open(voleUrl, "_blank");
+  if (!openedWindow) {
+    statusText.textContent = "Could not open Vol-E. Allow pop-ups for this page and try again.";
+    return;
+  }
+
+  openedWindow.opener = null;
+  statusText.textContent = "Opened image in Vol-E.";
+}
+
+function buildVoleUrl(metadata: ZarrImageMetadata): string {
+  const url = new URL(VOLE_VIEWER_URL);
+  const zIndex = clampIndex(appState.currentZ, metadata.shapeTCZYX.z);
+  const timeIndex = clampIndex(appState.currentT, metadata.shapeTCZYX.t);
+  const zSlice = metadata.shapeTCZYX.z <= 1 ? 0.5 : zIndex / (metadata.shapeTCZYX.z - 1);
+
+  url.searchParams.set("url", metadata.source.url);
+  url.searchParams.set("view", "Z");
+  url.searchParams.set("t", String(timeIndex));
+  url.searchParams.set("slice", `0.5,0.5,${formatUnitInterval(zSlice)}`);
+
+  for (let index = 0; index < metadata.shapeTCZYX.c; index++) {
+    const channel = appState.channels[index];
+    if (!channel?.enabled) {
+      url.searchParams.set(`c${index}`, "ven:0");
+      continue;
+    }
+
+    url.searchParams.set(`c${index}`, `ven:1,col:${stripHexPrefix(channel.color)}`);
+  }
+
+  return url.toString();
+}
+
 function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   const label = document.createElement("label");
   label.className = "channel-control";
@@ -378,6 +425,14 @@ function formatTCZYX(shape: ZarrImageMetadata["shapeTCZYX"]): string {
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return String(value);
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toPrecision(4);
+}
+
+function formatUnitInterval(value: number): string {
+  return Math.max(0, Math.min(1, value)).toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function stripHexPrefix(color: string): string {
+  return color.startsWith("#") ? color.slice(1) : color;
 }
 
 function clampIndex(value: number, size: number): number {
