@@ -187,6 +187,8 @@ h1 {
 }
 
 .image-tile {
+  display: grid;
+  grid-template-rows: auto 118px;
   overflow: hidden;
   border: 1px solid #d3dcd8;
   border-radius: 8px;
@@ -205,26 +207,34 @@ h1 {
 .tile-header {
   position: relative;
   display: grid;
+  grid-template-rows: auto 1fr;
   gap: 4px;
+  min-height: 0;
   padding: 12px 14px 14px;
   border-top: 1px solid #e5ebe8;
 }
 
 .tile-header h2 {
+  display: -webkit-box;
   margin: 0;
   padding-right: 70px;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   font-size: 0.98rem;
   line-height: 1.25;
   letter-spacing: 0;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .tile-header p {
+  display: -webkit-box;
   margin: 0;
-  overflow-wrap: anywhere;
+  overflow: hidden;
   color: #617071;
   font-size: 0.78rem;
   line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
 }
 
 .tile-state {
