@@ -186,6 +186,39 @@ h1 {
   padding: 18px clamp(16px, 3vw, 36px) 36px;
 }
 
+.canvas-grid.figure-grid {
+  gap: 12px;
+  align-items: stretch;
+  overflow-x: auto;
+}
+
+.canvas-grid.figure-grid .image-tile {
+  min-width: 180px;
+}
+
+.figure-axis-label {
+  color: #405051;
+  font-size: 0.78rem;
+  font-weight: 760;
+  line-height: 1.2;
+}
+
+.figure-col-label {
+  align-self: end;
+  justify-self: center;
+  padding: 0 6px 2px;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.figure-row-label {
+  align-self: center;
+  justify-self: end;
+  max-width: 140px;
+  padding-right: 6px;
+  text-align: right;
+}
+
 .image-tile {
   display: grid;
   grid-template-rows: auto 118px;

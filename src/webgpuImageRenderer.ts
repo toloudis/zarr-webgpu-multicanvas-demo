@@ -63,10 +63,29 @@ type TileClickCallback = (tileId: number) => void;
 interface TileText {
   title: string;
   subtitle: string;
+  placement?: TilePlacement;
 }
 
 interface TileHandle {
   id: number;
+}
+
+interface FigureTrack {
+  fr?: number;
+}
+
+export interface FigureGridLayout {
+  rows: readonly FigureTrack[];
+  cols: readonly FigureTrack[];
+  rowLabels: readonly string[];
+  colLabels: readonly string[];
+}
+
+export interface TilePlacement {
+  row: number;
+  col: number;
+  rowSpan: number;
+  colSpan: number;
 }
 
 interface ImageTile {
@@ -160,10 +179,52 @@ export class ImageGridRenderer {
     });
   }
 
-  addTile({ title, subtitle }: TileText): TileHandle {
+  setAutoGridLayout(): void {
+    this.gridElement.classList.remove("figure-grid");
+    this.gridElement.style.removeProperty("grid-template-columns");
+    this.gridElement.style.removeProperty("grid-template-rows");
+  }
+
+  setFigureGridLayout({ rows, cols, rowLabels, colLabels }: FigureGridLayout): void {
+    this.gridElement.classList.add("figure-grid");
+    this.gridElement.style.gridTemplateColumns = [
+      "max-content",
+      ...cols.map((col) => `minmax(180px, ${formatFr(col.fr)}fr)`),
+    ].join(" ");
+    this.gridElement.style.gridTemplateRows = [
+      "auto",
+      ...rows.map((row) => `minmax(0, ${formatFr(row.fr)}fr)`),
+    ].join(" ");
+
+    const corner = document.createElement("div");
+    corner.className = "figure-axis-label figure-corner-label";
+    corner.style.gridRow = "1";
+    corner.style.gridColumn = "1";
+    this.gridElement.append(corner);
+
+    for (let index = 0; index < colLabels.length; index++) {
+      this.gridElement.append(createFigureLabel("figure-col-label", colLabels[index], {
+        gridRow: 1,
+        gridColumn: index + 2,
+      }));
+    }
+
+    for (let index = 0; index < rowLabels.length; index++) {
+      this.gridElement.append(createFigureLabel("figure-row-label", rowLabels[index], {
+        gridRow: index + 2,
+        gridColumn: 1,
+      }));
+    }
+  }
+
+  addTile({ title, subtitle, placement }: TileText): TileHandle {
     const id = this.nextTileId++;
     const tileElement = document.createElement("article");
     tileElement.className = "image-tile is-loading";
+    if (placement) {
+      tileElement.style.gridRow = `${placement.row + 2} / span ${placement.rowSpan}`;
+      tileElement.style.gridColumn = `${placement.col + 2} / span ${placement.colSpan}`;
+    }
 
     const canvas = document.createElement("canvas");
     canvas.title = "Open in Vol-E";
@@ -479,4 +540,22 @@ function parseHexColor(color = "#ffffff"): [number, number, number] {
     Number.parseInt(match[2], 16) / 255,
     Number.parseInt(match[3], 16) / 255,
   ];
+}
+
+function createFigureLabel(
+  className: string,
+  text: string,
+  placement: { gridRow: number; gridColumn: number },
+): HTMLElement {
+  const label = document.createElement("div");
+  label.className = `figure-axis-label ${className}`;
+  label.textContent = text;
+  label.style.gridRow = String(placement.gridRow);
+  label.style.gridColumn = String(placement.gridColumn);
+  return label;
+}
+
+function formatFr(value: number | undefined): string {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) return "1";
+  return String(value);
 }

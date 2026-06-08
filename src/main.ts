@@ -1,8 +1,14 @@
 import "./styles.css";
 import { loadChannelPlaneSet, loadImageMetadata } from "./zarrLoader";
+import { orchestraFigureLayout } from "./orchestraFigureLayout";
 import { ZARR_IMAGE_SOURCES } from "./zarrSources";
 import type { ChannelRenderSettings, LoadedPlaneSet, ZarrImageMetadata, ZarrImageSource } from "./types";
-import { createImageGridRenderer, type ImageGridRenderer } from "./webgpuImageRenderer";
+import {
+  createImageGridRenderer,
+  type FigureGridLayout,
+  type ImageGridRenderer,
+  type TilePlacement,
+} from "./webgpuImageRenderer";
 
 const DEFAULT_CHANNEL_COLORS = [
   "#ffffff",
@@ -15,12 +21,21 @@ const DEFAULT_CHANNEL_COLORS = [
   "#ff9f0a",
 ];
 const VOLE_VIEWER_URL = "https://vole.allencell.org/viewer";
+const USE_ORCHESTRA_FIGURE_LAYOUT = true;
 
 interface LoadedImageState {
   source: ZarrImageSource;
   tileId: number;
+  timeIndexOverride?: number;
+  placement?: TilePlacement;
   metadata?: ZarrImageMetadata;
   planeSet?: LoadedPlaneSet;
+}
+
+interface ImageLoadEntry {
+  source: ZarrImageSource;
+  timeIndexOverride?: number;
+  placement?: TilePlacement;
 }
 
 interface AppState {
@@ -32,6 +47,7 @@ interface AppState {
   maxZIndex: number;
   channels: ChannelRenderSettings[];
   axesInitialized: boolean;
+  usingFigureLayout: boolean;
 }
 
 const loadButton = requireElement<HTMLButtonElement>("#load-button");
@@ -55,6 +71,7 @@ const appState: AppState = {
   maxZIndex: 0,
   channels: [],
   axesInitialized: false,
+  usingFigureLayout: USE_ORCHESTRA_FIGURE_LAYOUT,
 };
 
 let renderer: ImageGridRenderer | undefined;
@@ -106,25 +123,36 @@ async function loadSources(): Promise<void> {
   currentRenderAbortController?.abort();
   const abortController = new AbortController();
   currentLoadAbortController = abortController;
-  const sources = ZARR_IMAGE_SOURCES;
+  const imageEntries = getImageLoadEntries();
 
   activeRenderer.clear();
+  if (appState.usingFigureLayout) {
+    activeRenderer.setFigureGridLayout(getFigureGridLayout());
+  } else {
+    activeRenderer.setAutoGridLayout();
+  }
   appState.images = [];
   renderControls();
 
-  if (sources.length === 0) {
+  if (imageEntries.length === 0) {
     statusText.textContent = "No configured Zarr sources.";
     return;
   }
 
-  statusText.textContent = `Reading metadata for ${sources.length} image${sources.length === 1 ? "" : "s"}.`;
+  statusText.textContent = `Reading metadata for ${imageEntries.length} image${imageEntries.length === 1 ? "" : "s"}.`;
 
-  appState.images = sources.map((source, index) => {
+  appState.images = imageEntries.map((entry, index) => {
     const tile = activeRenderer.addTile({
-      title: source.label || `Image ${index + 1}`,
-      subtitle: source.url,
+      title: entry.source.label || `Image ${index + 1}`,
+      subtitle: entry.source.url,
+      placement: entry.placement,
     });
-    return { source, tileId: tile.id };
+    return {
+      source: entry.source,
+      tileId: tile.id,
+      timeIndexOverride: entry.timeIndexOverride,
+      placement: entry.placement,
+    };
   });
 
   const tasks = appState.images.map((imageState) => async (): Promise<void> => {
@@ -176,7 +204,9 @@ async function renderLoadedImages(): Promise<void> {
   currentRenderAbortController = abortController;
 
   const selectedChannels = appState.channels.filter((channel) => channel.enabled).length;
-  statusText.textContent = `Rendering T${appState.currentT} Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`;
+  statusText.textContent = appState.usingFigureLayout
+    ? `Rendering figure layout at Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`
+    : `Rendering T${appState.currentT} Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`;
 
   const tasks = imagesWithMetadata.map((imageState) => async (): Promise<void> => {
     const { metadata } = imageState;
@@ -185,7 +215,7 @@ async function renderLoadedImages(): Promise<void> {
     try {
       imageState.planeSet = await loadChannelPlaneSet({
         metadata,
-        timeIndex: appState.currentT,
+        timeIndex: getImageTimeIndex(imageState),
         zIndex: appState.currentZ,
         signal: abortController.signal,
       });
@@ -241,7 +271,13 @@ function configureGlobalStateFromImages(): void {
   appState.maxTimeIndex = maxT - 1;
   appState.maxZIndex = maxZ - 1;
 
-  if (appState.axesInitialized) {
+  if (appState.usingFigureLayout) {
+    appState.currentT = 0;
+    appState.currentZ = appState.axesInitialized
+      ? clampIndex(appState.currentZ, maxZ)
+      : Math.floor(appState.maxZIndex / 2);
+    appState.axesInitialized = true;
+  } else if (appState.axesInitialized) {
     appState.currentT = clampIndex(appState.currentT, maxT);
     appState.currentZ = clampIndex(appState.currentZ, maxZ);
   } else {
@@ -257,10 +293,13 @@ function reconcileChannels(maxChannels: number): void {
   const previousChannels = appState.channels;
   appState.channels = Array.from({ length: maxChannels }, (_, index) => {
     const previous = previousChannels[index];
+    const layoutChannel = appState.usingFigureLayout
+      ? getFigureLayoutChannelSettings(index)
+      : undefined;
     return {
       index,
-      enabled: previous?.enabled ?? true,
-      color: previous?.color ?? DEFAULT_CHANNEL_COLORS[index % DEFAULT_CHANNEL_COLORS.length],
+      enabled: previous?.enabled ?? layoutChannel?.enabled ?? true,
+      color: previous?.color ?? layoutChannel?.color ?? DEFAULT_CHANNEL_COLORS[index % DEFAULT_CHANNEL_COLORS.length],
     };
   });
 }
@@ -268,8 +307,10 @@ function reconcileChannels(maxChannels: number): void {
 function renderControls(): void {
   timeSlider.max = String(appState.maxTimeIndex);
   timeSlider.value = String(appState.currentT);
-  timeSlider.disabled = appState.maxTimeIndex === 0;
-  timeValue.value = `T${appState.currentT} / T${appState.maxTimeIndex}`;
+  timeSlider.disabled = appState.usingFigureLayout || appState.maxTimeIndex === 0;
+  timeValue.value = appState.usingFigureLayout
+    ? "layout T"
+    : `T${appState.currentT} / T${appState.maxTimeIndex}`;
 
   zSlider.max = String(appState.maxZIndex);
   zSlider.value = String(appState.currentZ);
@@ -294,12 +335,12 @@ function scheduleResolutionReload(): void {
 
 function openTileInVole(tileId: number): void {
   const imageState = appState.images.find((item) => item.tileId === tileId);
-  if (!imageState?.metadata) {
+  if (!imageState || !hasMetadata(imageState)) {
     statusText.textContent = "Image metadata is not ready yet.";
     return;
   }
 
-  const voleUrl = buildVoleUrl(imageState.metadata);
+  const voleUrl = buildVoleUrl(imageState);
   const openedWindow = window.open(voleUrl, "_blank");
   if (!openedWindow) {
     statusText.textContent = "Could not open Vol-E. Allow pop-ups for this page and try again.";
@@ -310,10 +351,11 @@ function openTileInVole(tileId: number): void {
   statusText.textContent = "Opened image in Vol-E.";
 }
 
-function buildVoleUrl(metadata: ZarrImageMetadata): string {
+function buildVoleUrl(imageState: LoadedImageState & { metadata: ZarrImageMetadata }): string {
+  const { metadata } = imageState;
   const url = new URL(VOLE_VIEWER_URL);
   const zIndex = clampIndex(appState.currentZ, metadata.shapeTCZYX.z);
-  const timeIndex = clampIndex(appState.currentT, metadata.shapeTCZYX.t);
+  const timeIndex = clampIndex(getImageTimeIndex(imageState), metadata.shapeTCZYX.t);
   const zSlice = metadata.shapeTCZYX.z <= 1 ? 0.5 : zIndex / (metadata.shapeTCZYX.z - 1);
 
   url.searchParams.set("url", metadata.source.url);
@@ -465,13 +507,81 @@ function hasCurrentPlaneSet(imageState: LoadedImageState): imageState is LoadedI
 } {
   if (!imageState.metadata || !imageState.planeSet) return false;
 
-  const expectedT = clampIndex(appState.currentT, imageState.metadata.shapeTCZYX.t);
+  const expectedT = clampIndex(getImageTimeIndex(imageState), imageState.metadata.shapeTCZYX.t);
   const expectedZ = clampIndex(appState.currentZ, imageState.metadata.shapeTCZYX.z);
 
   return imageState.planeSet.timeIndex === expectedT
     && imageState.planeSet.zIndex === expectedZ
     && imageState.planeSet.arrayPath === imageState.metadata.arrayPath
     && imageState.planeSet.resolutionTarget === imageState.metadata.resolutionTarget;
+}
+
+function getImageLoadEntries(): ImageLoadEntry[] {
+  if (!appState.usingFigureLayout) {
+    return ZARR_IMAGE_SOURCES.map((source) => ({ source }));
+  }
+
+  return orchestraFigureLayout.cells
+    .map((cell, index): ImageLoadEntry | undefined => {
+      const filePath = cell.file_paths[0];
+      if (!filePath) return undefined;
+
+      const url = normalizeFigureUrl(filePath);
+      return {
+        source: {
+          label: makeFigureCellLabel(url, index),
+          url,
+        },
+        timeIndexOverride: cell.t_indices[0] ?? orchestraFigureLayout.default_t,
+        placement: {
+          row: cell.row,
+          col: cell.col,
+          rowSpan: cell.row_span,
+          colSpan: cell.col_span,
+        },
+      };
+    })
+    .filter(isPresent);
+}
+
+function getFigureGridLayout(): FigureGridLayout {
+  return {
+    rows: orchestraFigureLayout.rows,
+    cols: orchestraFigureLayout.cols,
+    rowLabels: orchestraFigureLayout.row_labels,
+    colLabels: orchestraFigureLayout.col_labels,
+  };
+}
+
+function getFigureLayoutChannelSettings(index: number): Pick<ChannelRenderSettings, "enabled" | "color"> | undefined {
+  const lut = orchestraFigureLayout.lut_groups[0]?.channel_luts.find((channel) => channel.channel_idx === index);
+  if (!lut) return undefined;
+
+  return {
+    enabled: lut.enabled,
+    color: rgbToHex(lut.color),
+  };
+}
+
+function getImageTimeIndex(imageState: LoadedImageState): number {
+  return imageState.timeIndexOverride ?? appState.currentT;
+}
+
+function normalizeFigureUrl(filePath: string): string {
+  return filePath.replace(/\\/g, "/").replace(/^https:\/?\/?/, "https://");
+}
+
+function makeFigureCellLabel(url: string, index: number): string {
+  const fileName = url.split("/").at(-1);
+  return fileName || `Figure cell ${index + 1}`;
+}
+
+function rgbToHex(color: readonly [number, number, number]): string {
+  return `#${color.map((component) => clampColorByte(component).toString(16).padStart(2, "0")).join("")}`;
+}
+
+function clampColorByte(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
 }
 
 function requireElement<TElement extends Element>(selector: string): TElement {
@@ -484,4 +594,8 @@ function requireElement<TElement extends Element>(selector: string): TElement {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isPresent<T>(value: T | null | undefined): value is T {
+  return value !== null && value !== undefined;
 }
