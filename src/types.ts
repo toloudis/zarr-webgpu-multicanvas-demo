@@ -32,6 +32,7 @@ export interface ZarrImageMetadata {
   source: ZarrImageSource;
   arrayPath: string;
   multiresolutionLevel: number;
+  resolutionTarget: number;
   dimensionOrder: DimensionAxis[];
   arrayShape: number[];
   shapeTCZYX: TCZYXShape;
@@ -53,6 +54,7 @@ export interface LoadedSlice {
   dtype: string;
   arrayPath: string;
   multiresolutionLevel: number;
+  resolutionTarget: number;
   selections: ZarrSelection[];
 }
 

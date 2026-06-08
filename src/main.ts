@@ -25,6 +25,7 @@ interface AppState {
   images: LoadedImageState[];
   currentT: number;
   currentZ: number;
+  resolutionTarget: number;
   maxTimeIndex: number;
   maxZIndex: number;
   channels: ChannelRenderSettings[];
@@ -39,12 +40,15 @@ const timeSlider = requireElement<HTMLInputElement>("#time-slider");
 const timeValue = requireElement<HTMLOutputElement>("#time-value");
 const zSlider = requireElement<HTMLInputElement>("#z-slider");
 const zValue = requireElement<HTMLOutputElement>("#z-value");
+const resolutionSlider = requireElement<HTMLInputElement>("#resolution-slider");
+const resolutionValue = requireElement<HTMLOutputElement>("#resolution-value");
 const channelControls = requireElement<HTMLElement>("#channel-controls");
 
 const appState: AppState = {
   images: [],
   currentT: 0,
   currentZ: 0,
+  resolutionTarget: Number(resolutionSlider.value),
   maxTimeIndex: 0,
   maxZIndex: 0,
   channels: [],
@@ -54,6 +58,7 @@ const appState: AppState = {
 let renderer: ImageGridRenderer | undefined;
 let currentLoadAbortController: AbortController | undefined;
 let currentRenderAbortController: AbortController | undefined;
+let resolutionReloadTimer = 0;
 
 init().catch((error) => {
   console.error(error);
@@ -71,6 +76,11 @@ zSlider.addEventListener("input", () => {
   renderControls();
   void renderLoadedImages();
 });
+resolutionSlider.addEventListener("input", () => {
+  appState.resolutionTarget = Number(resolutionSlider.value);
+  renderControls();
+  scheduleResolutionReload();
+});
 
 async function init(): Promise<void> {
   renderer = await createImageGridRenderer(grid, (stats) => {
@@ -85,6 +95,7 @@ async function loadSources(): Promise<void> {
   const activeRenderer = renderer;
   if (!activeRenderer) return;
 
+  window.clearTimeout(resolutionReloadTimer);
   currentLoadAbortController?.abort();
   currentRenderAbortController?.abort();
   const abortController = new AbortController();
@@ -116,6 +127,7 @@ async function loadSources(): Promise<void> {
     try {
       imageState.metadata = await loadImageMetadata({
         source: imageState.source,
+        resolutionTarget: appState.resolutionTarget,
         signal: abortController.signal,
       });
       activeRenderer.updateTile(imageState.tileId, {
@@ -239,10 +251,20 @@ function renderControls(): void {
   zSlider.disabled = appState.maxZIndex === 0;
   zValue.value = `Z${appState.currentZ} / Z${appState.maxZIndex}`;
 
+  resolutionSlider.value = String(appState.resolutionTarget);
+  resolutionValue.value = `${appState.resolutionTarget} px`;
+
   channelControls.textContent = "";
   for (const channel of appState.channels) {
     channelControls.append(createChannelControl(channel));
   }
+}
+
+function scheduleResolutionReload(): void {
+  window.clearTimeout(resolutionReloadTimer);
+  resolutionReloadTimer = window.setTimeout(() => {
+    void loadSources();
+  }, 350);
 }
 
 function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
@@ -301,6 +323,7 @@ function formatMetadataSubtitle(metadata: ZarrImageMetadata): string {
   return [
     `level ${metadata.multiresolutionLevel}`,
     `path ${metadata.arrayPath || "/"}`,
+    `target ${metadata.resolutionTarget}px`,
     `TCZYX [${formatTCZYX(metadata.shapeTCZYX)}]`,
     metadata.dtype,
   ].join("  ");
@@ -310,6 +333,7 @@ function formatRenderSubtitle(metadata: ZarrImageMetadata, state: string): strin
   return [
     state,
     `level ${metadata.multiresolutionLevel}`,
+    `target ${metadata.resolutionTarget}px`,
     `TCZYX [${formatTCZYX(metadata.shapeTCZYX)}]`,
   ].join("  ");
 }
@@ -323,6 +347,7 @@ function formatSliceSubtitle(slice: {
   channelRanges: Array<{ channelIndex: number; min: number; max: number }>;
   shapeTCZYX: ZarrImageMetadata["shapeTCZYX"];
   multiresolutionLevel: number;
+  resolutionTarget: number;
   arrayPath: string;
 }): string {
   const channels = slice.channelIndices.length
@@ -339,6 +364,7 @@ function formatSliceSubtitle(slice: {
     `T${slice.timeIndex} Z${slice.zIndex}`,
     `channels ${channels}`,
     `level ${slice.multiresolutionLevel}`,
+    `target ${slice.resolutionTarget}px`,
     `path ${slice.arrayPath || "/"}`,
     `TCZYX [${formatTCZYX(slice.shapeTCZYX)}]`,
     ranges,

@@ -19,6 +19,7 @@ const DEFAULT_ARRAY_PATH_CANDIDATES = ["0", "0/0", "s0"];
 
 interface LoadImageMetadataOptions {
   source: ZarrImageSource;
+  resolutionTarget: number;
   signal?: AbortSignal;
 }
 
@@ -34,6 +35,11 @@ interface OpenedArray {
   arr: ZarrArray;
   arrayPath: string;
   multiresolutionLevel: number;
+}
+
+interface CandidateArray extends OpenedArray {
+  dimensionOrder: DimensionAxis[];
+  shapeTCZYX: TCZYXShape;
 }
 
 interface PlaneSelection {
@@ -57,10 +63,16 @@ interface RgbColor {
 
 export async function loadImageMetadata({
   source,
+  resolutionTarget,
   signal,
 }: LoadImageMetadataOptions): Promise<ZarrImageMetadata> {
   const root = createRootLocation(source);
-  const { arr, arrayPath, multiresolutionLevel } = await openSourceArray(root, source, signal);
+  const { arr, arrayPath, multiresolutionLevel } = await openSourceArray(
+    root,
+    source,
+    resolutionTarget,
+    signal,
+  );
   const dimensionOrder = normalizeDimensionOrder(arr, source.dimensionOrder ?? "TCZYX");
   const compatArr = arr as ZarrArray & { chunkShape?: number[]; dataType?: string };
 
@@ -68,6 +80,7 @@ export async function loadImageMetadata({
     source,
     arrayPath,
     multiresolutionLevel,
+    resolutionTarget,
     dimensionOrder,
     arrayShape: Array.from(arr.shape ?? []),
     shapeTCZYX: makeTCZYXShape(arr.shape ?? [], dimensionOrder),
@@ -150,6 +163,7 @@ export async function loadBlendedSlice({
     dtype: metadata.dtype,
     arrayPath: metadata.arrayPath,
     multiresolutionLevel: metadata.multiresolutionLevel,
+    resolutionTarget: metadata.resolutionTarget,
     selections,
   };
 }
@@ -163,6 +177,7 @@ function createRootLocation(source: ZarrImageSource): zarr.Location<zarr.FetchSt
 async function openSourceArray(
   root: zarr.Location<zarr.FetchStore>,
   source: ZarrImageSource,
+  resolutionTarget: number,
   signal?: AbortSignal,
 ): Promise<OpenedArray> {
   if (source.arrayPath) {
@@ -179,20 +194,27 @@ async function openSourceArray(
   }
 
   const group = await zarr.open(root, { kind: "group", signal });
-  const multiscalePath = findFirstMultiscaleArrayPath(group);
-  if (multiscalePath) {
-    return {
-      arr: await openArrayAtPath(root, multiscalePath, signal),
-      arrayPath: multiscalePath,
-      multiresolutionLevel: parseMultiresolutionLevel(multiscalePath),
-    };
+  const multiscalePaths = findMultiscaleArrayPaths(group);
+  const multiscaleCandidate = await chooseBestCandidate(
+    root,
+    multiscalePaths,
+    source.dimensionOrder ?? "TCZYX",
+    resolutionTarget,
+    signal,
+  );
+  if (multiscaleCandidate) {
+    return multiscaleCandidate;
   }
 
-  for (const path of DEFAULT_ARRAY_PATH_CANDIDATES) {
-    const arr = await tryOpenArray(root.resolve(path), signal);
-    if (arr) {
-      return { arr, arrayPath: path, multiresolutionLevel: parseMultiresolutionLevel(path) };
-    }
+  const fallbackCandidate = await chooseBestCandidate(
+    root,
+    DEFAULT_ARRAY_PATH_CANDIDATES,
+    source.dimensionOrder ?? "TCZYX",
+    resolutionTarget,
+    signal,
+  );
+  if (fallbackCandidate) {
+    return fallbackCandidate;
   }
 
   throw new Error(
@@ -222,10 +244,53 @@ async function tryOpenArray(
   }
 }
 
-function findFirstMultiscaleArrayPath(group: ZarrGroup): string | null {
+async function chooseBestCandidate(
+  root: zarr.Location<zarr.FetchStore>,
+  paths: readonly string[],
+  configuredDimensionOrder: string,
+  resolutionTarget: number,
+  signal?: AbortSignal,
+): Promise<CandidateArray | null> {
+  const candidates: CandidateArray[] = [];
+
+  for (const path of paths) {
+    const arr = await tryOpenArray(path ? root.resolve(path) : root, signal);
+    if (!arr) continue;
+
+    const dimensionOrder = normalizeDimensionOrder(arr, configuredDimensionOrder);
+    candidates.push({
+      arr,
+      arrayPath: path,
+      multiresolutionLevel: parseMultiresolutionLevel(path),
+      dimensionOrder,
+      shapeTCZYX: makeTCZYXShape(arr.shape, dimensionOrder),
+    });
+  }
+
+  if (candidates.length === 0) return null;
+  return candidates.sort((a, b) => {
+    const aTarget = getCandidateTargetDimension(a);
+    const bTarget = getCandidateTargetDimension(b);
+    const aIsLargeEnough = aTarget >= resolutionTarget;
+    const bIsLargeEnough = bTarget >= resolutionTarget;
+
+    if (aIsLargeEnough && bIsLargeEnough) return aTarget - bTarget;
+    if (aIsLargeEnough) return -1;
+    if (bIsLargeEnough) return 1;
+    return bTarget - aTarget;
+  })[0];
+}
+
+function getCandidateTargetDimension(candidate: CandidateArray): number {
+  return Math.max(candidate.shapeTCZYX.x, candidate.shapeTCZYX.y);
+}
+
+function findMultiscaleArrayPaths(group: ZarrGroup): string[] {
   const omeAttrs = getRecordProperty(group.attrs, "ome");
   const multiscales = group.attrs.multiscales ?? getRecordProperty(omeAttrs, "multiscales");
-  if (!Array.isArray(multiscales)) return null;
+  if (!Array.isArray(multiscales)) return [];
+
+  const paths: string[] = [];
 
   for (const multiscale of multiscales) {
     const datasets = getRecordProperty(multiscale, "datasets");
@@ -234,12 +299,12 @@ function findFirstMultiscaleArrayPath(group: ZarrGroup): string | null {
     for (const dataset of datasets) {
       const path = getRecordProperty(dataset, "path");
       if (typeof path === "string" && path.length > 0) {
-        return path;
+        paths.push(path);
       }
     }
   }
 
-  return null;
+  return Array.from(new Set(paths));
 }
 
 function normalizeDimensionOrder(arr: ZarrArray, dimensionOrder: string): DimensionAxis[] {

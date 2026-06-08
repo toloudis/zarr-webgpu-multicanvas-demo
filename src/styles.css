@@ -68,11 +68,11 @@ h1 {
 
 .axis-controls {
   display: grid;
-  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
   gap: 14px;
-  min-width: min(100%, 400px);
-  max-width: 520px;
-  flex: 1 1 400px;
+  min-width: min(100%, 480px);
+  max-width: 720px;
+  flex: 1 1 540px;
 }
 
 .range-control {
