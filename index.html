@@ -10,10 +10,26 @@
       <section class="control-band" aria-label="Zarr slice controls">
         <div class="brand-block">
           <p class="eyebrow">WebGPU Zarr Grid</p>
-          <h1>Middle-Z canvases</h1>
+          <h1>Synced TCZYX canvases</h1>
         </div>
 
         <div class="controls">
+          <div class="axis-controls" aria-label="Global slice controls">
+            <label class="range-control" for="time-slider">
+              <span>Time</span>
+              <output id="time-value" for="time-slider">T0 / T0</output>
+              <input id="time-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+            </label>
+
+            <label class="range-control" for="z-slider">
+              <span>Z</span>
+              <output id="z-value" for="z-slider">Z0 / Z0</output>
+              <input id="z-slider" type="range" min="0" max="0" value="0" step="1" disabled />
+            </label>
+          </div>
+
+          <div id="channel-controls" class="channel-controls" aria-label="Global channel controls"></div>
+
           <button id="load-button" class="primary-button" type="button">
             <span class="button-mark" aria-hidden="true"></span>
             Load

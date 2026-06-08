@@ -1,6 +1,6 @@
 # Zarr WebGPU Multi-Canvas Demo
 
-This is a small Vite app that loads 2D `Y,X` planes from a static list of 5D `T,C,Z,Y,X` Zarr URLs with `zarrita`, then renders every plane into its own WebGPU canvas. Each source loads `T=0`, `C=0`, and the middle `Z` index.
+This is a small Vite app that loads 2D `Y,X` planes from a static list of `T,C,Z,Y,X` Zarr URLs with `zarrita`, then renders every plane into its own WebGPU canvas. The app keeps one synchronized global `T` index, one synchronized global `Z` index, and one shared set of channel visibility/color controls for every loaded image.
 
 The renderer follows the multiple-canvas pattern from WebGPU Fundamentals: one device, one configured context per canvas, a shared render pipeline, one command encoder for all visible canvases in a frame, `ResizeObserver` for backing-store sizing, and `IntersectionObserver` so off-screen canvases are skipped.
 

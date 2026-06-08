@@ -192,6 +192,16 @@ export class ImageGridRenderer {
     if (subtitle) tile.subtitleElement.textContent = subtitle;
   }
 
+  setTileLoading(id: number, subtitle?: string): void {
+    const tile = this.tiles.get(id);
+    if (!tile) return;
+    tile.ready = false;
+    tile.element.classList.add("is-loading");
+    tile.element.classList.remove("has-error");
+    tile.stateElement.textContent = "Loading";
+    if (subtitle) tile.subtitleElement.textContent = subtitle;
+  }
+
   uploadTile(id: number, image: UploadableImage): void {
     const tile = this.tiles.get(id);
     if (!tile) return;
