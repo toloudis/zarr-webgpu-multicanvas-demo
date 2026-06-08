@@ -1,9 +1,9 @@
 import * as zarr from "zarrita";
 import type {
-  ChannelRange,
-  ChannelRenderSettings,
   DimensionAxis,
-  LoadedSlice,
+  LoadedChannelPlane,
+  LoadedPlaneSet,
+  NumericTypedArray,
   TCZYXShape,
   ZarrImageMetadata,
   ZarrImageSource,
@@ -16,6 +16,15 @@ type ChunkView = zarr.Chunk<zarr.DataType> & { offset?: number };
 type ArrayData = ArrayLike<unknown> & { get?: (index: number) => unknown };
 
 const DEFAULT_ARRAY_PATH_CANDIDATES = ["0", "0/0", "s0"];
+const MAX_CHANNEL_PLANE_CACHE_BYTES = 512 * 1024 * 1024;
+
+interface CachedChannelPlane {
+  plane: LoadedChannelPlane;
+  bytes: number;
+}
+
+const channelPlaneCache = new Map<string, CachedChannelPlane>();
+let channelPlaneCacheBytes = 0;
 
 interface LoadImageMetadataOptions {
   source: ZarrImageSource;
@@ -23,11 +32,10 @@ interface LoadImageMetadataOptions {
   signal?: AbortSignal;
 }
 
-interface LoadBlendedSliceOptions {
+interface LoadChannelPlaneSetOptions {
   metadata: ZarrImageMetadata;
   timeIndex: number;
   zIndex: number;
-  channels: ChannelRenderSettings[];
   signal?: AbortSignal;
 }
 
@@ -50,15 +58,10 @@ interface PlaneSelection {
 }
 
 interface LuminancePlane {
+  nativePixels: NumericTypedArray;
   pixels: Uint8Array;
   min: number;
   max: number;
-}
-
-interface RgbColor {
-  r: number;
-  g: number;
-  b: number;
 }
 
 export async function loadImageMetadata({
@@ -89,38 +92,37 @@ export async function loadImageMetadata({
   };
 }
 
-export async function loadBlendedSlice({
+export async function loadChannelPlaneSet({
   metadata,
   timeIndex,
   zIndex,
-  channels,
   signal,
-}: LoadBlendedSliceOptions): Promise<LoadedSlice> {
+}: LoadChannelPlaneSetOptions): Promise<LoadedPlaneSet> {
   const root = createRootLocation(metadata.source);
   const arr = await openArrayAtPath(root, metadata.arrayPath, signal);
-  const selectedChannels = channels.filter((channel) => channel.enabled);
   const width = metadata.shapeTCZYX.x;
   const height = metadata.shapeTCZYX.y;
-  const rgba = new Uint8Array(width * height * 4);
-  const channelRanges: ChannelRange[] = [];
-  const channelIndices: number[] = [];
-  const selections: ZarrSelection[] = [];
-
-  for (let index = 3; index < rgba.length; index += 4) {
-    rgba[index] = 255;
-  }
+  const channelPlanes: LoadedChannelPlane[] = [];
 
   let actualTimeIndex = clampIndex(timeIndex, metadata.shapeTCZYX.t);
   let actualZIndex = clampIndex(zIndex, metadata.shapeTCZYX.z);
 
-  for (const channel of selectedChannels) {
-    if (channel.index >= metadata.shapeTCZYX.c) continue;
-
+  for (let channelIndex = 0; channelIndex < metadata.shapeTCZYX.c; channelIndex++) {
     const planeSelection = makePlaneSelection(arr.shape, metadata.dimensionOrder, {
       timeIndex,
       zIndex,
-      channelIndex: channel.index,
+      channelIndex,
     });
+    const cacheKey = makeChannelPlaneCacheKey(metadata, planeSelection);
+    const cachedPlane = getCachedChannelPlane(cacheKey);
+
+    if (cachedPlane) {
+      actualTimeIndex = planeSelection.timeIndex;
+      actualZIndex = planeSelection.zIndex;
+      channelPlanes.push(cachedPlane);
+      continue;
+    }
+
     const view = await zarr.get(arr, planeSelection.selection, { signal }) as ChunkView;
 
     if (view.shape.length !== 2) {
@@ -135,28 +137,28 @@ export async function loadBlendedSlice({
     }
 
     const luminance = normalizeToLuminance(view, width, height);
-    const color = parseHexColor(channel.color);
-    blendLuminance(rgba, luminance.pixels, color);
 
     actualTimeIndex = planeSelection.timeIndex;
     actualZIndex = planeSelection.zIndex;
-    channelRanges.push({
+    const channelPlane: LoadedChannelPlane = {
       channelIndex: planeSelection.channelIndex,
+      nativePixels: luminance.nativePixels,
+      pixels: luminance.pixels,
       min: luminance.min,
       max: luminance.max,
-    });
-    channelIndices.push(planeSelection.channelIndex);
-    selections.push(planeSelection.selection);
+      selection: planeSelection.selection,
+    };
+
+    setCachedChannelPlane(cacheKey, channelPlane);
+    channelPlanes.push(channelPlane);
   }
 
   return {
-    rgba,
     width,
     height,
-    channelRanges,
+    channelPlanes,
     timeIndex: actualTimeIndex,
     zIndex: actualZIndex,
-    channelIndices,
     arrayShape: metadata.arrayShape,
     shapeTCZYX: metadata.shapeTCZYX,
     chunks: metadata.chunks,
@@ -164,14 +166,16 @@ export async function loadBlendedSlice({
     arrayPath: metadata.arrayPath,
     multiresolutionLevel: metadata.multiresolutionLevel,
     resolutionTarget: metadata.resolutionTarget,
-    selections,
   };
 }
 
 function createRootLocation(source: ZarrImageSource): zarr.Location<zarr.FetchStore> {
-  const absoluteUrl = new URL(source.url, window.location.href).toString();
-  const store = new zarr.FetchStore(absoluteUrl);
+  const store = new zarr.FetchStore(normalizeSourceUrl(source.url));
   return zarr.root(store);
+}
+
+function normalizeSourceUrl(url: string): string {
+  return new URL(url, window.location.href).toString();
 }
 
 async function openSourceArray(
@@ -393,11 +397,14 @@ function normalizeToLuminance(view: ChunkView, width: number, height: number): L
   const offset = view.offset ?? 0;
   const strideY = stride?.[0] ?? width;
   const strideX = stride?.[1] ?? 1;
+  const nativePixels = createNativePlaneArray(data, width * height);
 
   let min = Infinity;
   let max = -Infinity;
+  let out = 0;
 
   forEachValue(data, width, height, offset, strideY, strideX, (value) => {
+    nativePixels[out++] = value;
     if (!Number.isNaN(value)) {
       min = Math.min(min, value);
       max = Math.max(max, value);
@@ -411,36 +418,80 @@ function normalizeToLuminance(view: ChunkView, width: number, height: number): L
 
   const scale = max === min ? 0 : 255 / (max - min);
   const pixels = new Uint8Array(width * height);
-  let out = 0;
 
-  forEachValue(data, width, height, offset, strideY, strideX, (value) => {
-    pixels[out++] = max === min
+  for (let index = 0; index < nativePixels.length; index++) {
+    const value = nativePixels[index];
+    pixels[index] = max === min
       ? 128
       : Math.max(0, Math.min(255, Math.round((value - min) * scale)));
-  });
+  }
 
-  return { pixels, min, max };
+  return { nativePixels, pixels, min, max };
 }
 
-function blendLuminance(rgba: Uint8Array, luminance: Uint8Array, color: RgbColor): void {
-  for (let index = 0; index < luminance.length; index++) {
-    const out = index * 4;
-    const value = luminance[index];
-    rgba[out] = Math.min(255, rgba[out] + Math.round(value * color.r / 255));
-    rgba[out + 1] = Math.min(255, rgba[out + 1] + Math.round(value * color.g / 255));
-    rgba[out + 2] = Math.min(255, rgba[out + 2] + Math.round(value * color.b / 255));
+function makeChannelPlaneCacheKey(metadata: ZarrImageMetadata, planeSelection: PlaneSelection): string {
+  return [
+    normalizeSourceUrl(metadata.source.url),
+    metadata.multiresolutionLevel,
+    metadata.arrayPath || "/",
+    `T${planeSelection.timeIndex}`,
+    `C${planeSelection.channelIndex}`,
+    `Z${planeSelection.zIndex}`,
+  ].join("|");
+}
+
+function getCachedChannelPlane(cacheKey: string): LoadedChannelPlane | undefined {
+  const cached = channelPlaneCache.get(cacheKey);
+  if (!cached) return undefined;
+
+  channelPlaneCache.delete(cacheKey);
+  channelPlaneCache.set(cacheKey, cached);
+  return cached.plane;
+}
+
+function setCachedChannelPlane(cacheKey: string, plane: LoadedChannelPlane): void {
+  const bytes = getChannelPlaneByteLength(plane);
+  if (bytes > MAX_CHANNEL_PLANE_CACHE_BYTES) return;
+
+  const previous = channelPlaneCache.get(cacheKey);
+  if (previous) {
+    channelPlaneCacheBytes -= previous.bytes;
+    channelPlaneCache.delete(cacheKey);
+  }
+
+  channelPlaneCache.set(cacheKey, { plane, bytes });
+  channelPlaneCacheBytes += bytes;
+  trimChannelPlaneCache();
+}
+
+function trimChannelPlaneCache(): void {
+  while (channelPlaneCacheBytes > MAX_CHANNEL_PLANE_CACHE_BYTES) {
+    const oldestKey = channelPlaneCache.keys().next().value;
+    if (oldestKey === undefined) return;
+
+    const oldest = channelPlaneCache.get(oldestKey);
+    if (oldest) channelPlaneCacheBytes -= oldest.bytes;
+    channelPlaneCache.delete(oldestKey);
   }
 }
 
-function parseHexColor(color: string): RgbColor {
-  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
-  if (!match) return { r: 255, g: 255, b: 255 };
+function getChannelPlaneByteLength(plane: LoadedChannelPlane): number {
+  return plane.nativePixels.byteLength + plane.pixels.byteLength;
+}
 
-  return {
-    r: Number.parseInt(match[1], 16),
-    g: Number.parseInt(match[2], 16),
-    b: Number.parseInt(match[3], 16),
-  };
+function createNativePlaneArray(
+  data: zarr.TypedArray<zarr.DataType>,
+  length: number,
+): NumericTypedArray {
+  if (data instanceof Int8Array) return new Int8Array(length);
+  if (data instanceof Uint8Array) return new Uint8Array(length);
+  if (data instanceof Uint8ClampedArray) return new Uint8ClampedArray(length);
+  if (data instanceof Int16Array) return new Int16Array(length);
+  if (data instanceof Uint16Array) return new Uint16Array(length);
+  if (data instanceof Int32Array) return new Int32Array(length);
+  if (data instanceof Uint32Array) return new Uint32Array(length);
+  if (data instanceof Float64Array) return new Float64Array(length);
+  return new Float32Array(length);
 }
 
 function mapDimensionName(name: string): DimensionAxis | null {

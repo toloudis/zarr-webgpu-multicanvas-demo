@@ -1,7 +1,7 @@
 import "./styles.css";
-import { loadBlendedSlice, loadImageMetadata } from "./zarrLoader";
+import { loadChannelPlaneSet, loadImageMetadata } from "./zarrLoader";
 import { ZARR_IMAGE_SOURCES } from "./zarrSources";
-import type { ChannelRenderSettings, ZarrImageMetadata, ZarrImageSource } from "./types";
+import type { ChannelRenderSettings, LoadedPlaneSet, ZarrImageMetadata, ZarrImageSource } from "./types";
 import { createImageGridRenderer, type ImageGridRenderer } from "./webgpuImageRenderer";
 
 const DEFAULT_CHANNEL_COLORS = [
@@ -20,6 +20,7 @@ interface LoadedImageState {
   source: ZarrImageSource;
   tileId: number;
   metadata?: ZarrImageMetadata;
+  planeSet?: LoadedPlaneSet;
 }
 
 interface AppState {
@@ -182,17 +183,16 @@ async function renderLoadedImages(): Promise<void> {
     activeRenderer.setTileLoading(imageState.tileId, formatRenderSubtitle(metadata, "Loading"));
 
     try {
-      const slice = await loadBlendedSlice({
+      imageState.planeSet = await loadChannelPlaneSet({
         metadata,
         timeIndex: appState.currentT,
         zIndex: appState.currentZ,
-        channels: appState.channels,
         signal: abortController.signal,
       });
 
-      activeRenderer.uploadTile(imageState.tileId, slice);
+      activeRenderer.uploadChannelPlanes(imageState.tileId, imageState.planeSet, appState.channels);
       activeRenderer.updateTile(imageState.tileId, {
-        subtitle: formatSliceSubtitle(slice),
+        subtitle: formatPlaneSetSubtitle(imageState.planeSet, appState.channels),
       });
     } catch (error) {
       if (abortController.signal.aborted) return;
@@ -210,6 +210,26 @@ async function renderLoadedImages(): Promise<void> {
   statusText.textContent = failed
     ? `Rendered ${rendered}; ${failed} failed.`
     : `Rendered ${rendered} image${rendered === 1 ? "" : "s"}.`;
+}
+
+function updateCachedChannelRendering(): void {
+  const activeRenderer = renderer;
+  if (!activeRenderer) return;
+
+  const imagesWithPlanes = appState.images.filter(hasCurrentPlaneSet);
+  if (imagesWithPlanes.length === 0) {
+    statusText.textContent = "Channel settings will apply after image data finishes loading.";
+    return;
+  }
+
+  for (const imageState of imagesWithPlanes) {
+    activeRenderer.updateChannelSettings(imageState.tileId, appState.channels);
+    activeRenderer.updateTile(imageState.tileId, {
+      subtitle: formatPlaneSetSubtitle(imageState.planeSet, appState.channels),
+    });
+  }
+
+  statusText.textContent = `Updated channel shader settings for ${imagesWithPlanes.length} image${imagesWithPlanes.length === 1 ? "" : "s"}.`;
 }
 
 function configureGlobalStateFromImages(): void {
@@ -324,7 +344,7 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   checkbox.addEventListener("change", () => {
     channel.enabled = checkbox.checked;
     renderControls();
-    void renderLoadedImages();
+    updateCachedChannelRendering();
   });
 
   const color = document.createElement("input");
@@ -333,7 +353,7 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   color.disabled = !channel.enabled;
   color.addEventListener("input", () => {
     channel.color = color.value;
-    void renderLoadedImages();
+    updateCachedChannelRendering();
   });
 
   const name = document.createElement("span");
@@ -385,35 +405,28 @@ function formatRenderSubtitle(metadata: ZarrImageMetadata, state: string): strin
   ].join("  ");
 }
 
-function formatSliceSubtitle(slice: {
-  width: number;
-  height: number;
-  timeIndex: number;
-  zIndex: number;
-  channelIndices: number[];
-  channelRanges: Array<{ channelIndex: number; min: number; max: number }>;
-  shapeTCZYX: ZarrImageMetadata["shapeTCZYX"];
-  multiresolutionLevel: number;
-  resolutionTarget: number;
-  arrayPath: string;
-}): string {
-  const channels = slice.channelIndices.length
-    ? slice.channelIndices.map((index) => `C${index}`).join(", ")
+function formatPlaneSetSubtitle(
+  planeSet: LoadedPlaneSet,
+  channels: readonly ChannelRenderSettings[],
+): string {
+  const enabledRanges = planeSet.channelPlanes.filter((plane) => channels[plane.channelIndex]?.enabled);
+  const renderedChannels = enabledRanges.length
+    ? enabledRanges.map((plane) => `C${plane.channelIndex}`).join(", ")
     : "none";
-  const ranges = slice.channelRanges.length
-    ? slice.channelRanges
+  const ranges = enabledRanges.length
+    ? enabledRanges
       .map((range) => `C${range.channelIndex} ${formatNumber(range.min)}-${formatNumber(range.max)}`)
       .join("; ")
     : "no channel ranges";
 
   return [
-    `${slice.width} x ${slice.height}`,
-    `T${slice.timeIndex} Z${slice.zIndex}`,
-    `channels ${channels}`,
-    `level ${slice.multiresolutionLevel}`,
-    `target ${slice.resolutionTarget}px`,
-    `path ${slice.arrayPath || "/"}`,
-    `TCZYX [${formatTCZYX(slice.shapeTCZYX)}]`,
+    `${planeSet.width} x ${planeSet.height}`,
+    `T${planeSet.timeIndex} Z${planeSet.zIndex}`,
+    `channels ${renderedChannels}`,
+    `level ${planeSet.multiresolutionLevel}`,
+    `target ${planeSet.resolutionTarget}px`,
+    `path ${planeSet.arrayPath || "/"}`,
+    `TCZYX [${formatTCZYX(planeSet.shapeTCZYX)}]`,
     ranges,
   ].join("  ");
 }
@@ -444,6 +457,21 @@ function hasMetadata(imageState: LoadedImageState): imageState is LoadedImageSta
   metadata: ZarrImageMetadata;
 } {
   return imageState.metadata !== undefined;
+}
+
+function hasCurrentPlaneSet(imageState: LoadedImageState): imageState is LoadedImageState & {
+  metadata: ZarrImageMetadata;
+  planeSet: LoadedPlaneSet;
+} {
+  if (!imageState.metadata || !imageState.planeSet) return false;
+
+  const expectedT = clampIndex(appState.currentT, imageState.metadata.shapeTCZYX.t);
+  const expectedZ = clampIndex(appState.currentZ, imageState.metadata.shapeTCZYX.z);
+
+  return imageState.planeSet.timeIndex === expectedT
+    && imageState.planeSet.zIndex === expectedZ
+    && imageState.planeSet.arrayPath === imageState.metadata.arrayPath
+    && imageState.planeSet.resolutionTarget === imageState.metadata.resolutionTarget;
 }
 
 function requireElement<TElement extends Element>(selector: string): TElement {

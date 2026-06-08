@@ -1,9 +1,19 @@
-import type { LoadedSlice, RenderStats } from "./types";
+import type { ChannelRenderSettings, LoadedPlaneSet, RenderStats } from "./types";
+
+const MAX_GPU_CHANNELS = 32;
+const CHANNEL_SETTINGS_FLOATS = (MAX_GPU_CHANNELS + 1) * 4;
 
 const SHADER = /* wgsl */ `
+const MAX_CHANNELS = ${MAX_GPU_CHANNELS}u;
+
 struct VertexOut {
   @builtin(position) position: vec4f,
   @location(0) uv: vec2f,
+};
+
+struct ChannelSettings {
+  colors: array<vec4f, ${MAX_GPU_CHANNELS}>,
+  details: vec4f,
 };
 
 @vertex
@@ -26,12 +36,24 @@ fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   return out;
 }
 
-@group(0) @binding(0) var imageTexture: texture_2d<f32>;
+@group(0) @binding(0) var channelTexture: texture_2d_array<f32>;
 @group(0) @binding(1) var imageSampler: sampler;
+@group(0) @binding(2) var<uniform> channelSettings: ChannelSettings;
 
 @fragment
-fn fragmentMain(in: VertexOut) -> @location(0) vec4f {
-  return textureSample(imageTexture, imageSampler, in.uv);
+fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
+  var color = vec3f(0.0);
+  let channelCount = min(u32(channelSettings.details.x), MAX_CHANNELS);
+
+  for (var channelIndex = 0u; channelIndex < channelCount; channelIndex = channelIndex + 1u) {
+    let tint = channelSettings.colors[channelIndex];
+    if (tint.a > 0.0) {
+      let value = textureSample(channelTexture, imageSampler, input.uv, i32(channelIndex)).r;
+      color = color + (value * tint.rgb * tint.a);
+    }
+  }
+
+  return vec4f(min(color, vec3f(1.0)), 1.0);
 }
 `;
 
@@ -56,11 +78,11 @@ interface ImageTile {
   subtitleElement: HTMLParagraphElement;
   stateElement: HTMLSpanElement;
   bindGroup: GPUBindGroup | null;
-  texture: GPUTexture | null;
+  channelTexture: GPUTexture | null;
+  settingsBuffer: GPUBuffer | null;
+  channelCount: number;
   ready: boolean;
 }
-
-type UploadableImage = Pick<LoadedSlice, "rgba" | "width" | "height">;
 
 export async function createImageGridRenderer(
   gridElement: HTMLElement,
@@ -184,7 +206,9 @@ export class ImageGridRenderer {
       subtitleElement,
       stateElement,
       bindGroup: null,
-      texture: null,
+      channelTexture: null,
+      settingsBuffer: null,
+      channelCount: 0,
       ready: false,
     };
 
@@ -214,44 +238,89 @@ export class ImageGridRenderer {
     if (subtitle) tile.subtitleElement.textContent = subtitle;
   }
 
-  uploadTile(id: number, image: UploadableImage): void {
+  uploadChannelPlanes(
+    id: number,
+    planeSet: LoadedPlaneSet,
+    channels: readonly ChannelRenderSettings[],
+  ): void {
     const tile = this.tiles.get(id);
     if (!tile) return;
 
-    tile.texture?.destroy();
-    tile.texture = this.device.createTexture({
-      label: `slice ${id} texture`,
-      size: [image.width, image.height],
-      format: "rgba8unorm",
+    const channelPlanes = planeSet.channelPlanes.slice(0, MAX_GPU_CHANNELS);
+    if (channelPlanes.length === 0) {
+      this.setTileError(id, "No channel planes were loaded.");
+      return;
+    }
+
+    tile.channelTexture?.destroy();
+    tile.settingsBuffer?.destroy();
+    tile.channelTexture = this.device.createTexture({
+      label: `slice ${id} channel texture array`,
+      size: {
+        width: planeSet.width,
+        height: planeSet.height,
+        depthOrArrayLayers: channelPlanes.length,
+      },
+      format: "r8unorm",
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
-    const bytesPerRow = alignTo(image.width * 4, 256);
-    const upload = bytesPerRow === image.width * 4
-      ? image.rgba
-      : copyWithAlignedRows(image.rgba, image.width, image.height, bytesPerRow);
+    const bytesPerRow = alignTo(planeSet.width, 256);
+    for (let layer = 0; layer < channelPlanes.length; layer++) {
+      const plane = channelPlanes[layer];
+      const upload = bytesPerRow === planeSet.width
+        ? plane.pixels
+        : copySingleChannelWithAlignedRows(plane.pixels, planeSet.width, planeSet.height, bytesPerRow);
 
-    this.device.queue.writeTexture(
-      { texture: tile.texture },
-      upload,
-      { bytesPerRow, rowsPerImage: image.height },
-      { width: image.width, height: image.height },
-    );
+      this.device.queue.writeTexture(
+        {
+          texture: tile.channelTexture,
+          origin: { x: 0, y: 0, z: layer },
+        },
+        upload,
+        { bytesPerRow, rowsPerImage: planeSet.height },
+        { width: planeSet.width, height: planeSet.height, depthOrArrayLayers: 1 },
+      );
+    }
+
+    tile.settingsBuffer = this.device.createBuffer({
+      label: `slice ${id} channel settings`,
+      size: CHANNEL_SETTINGS_FLOATS * Float32Array.BYTES_PER_ELEMENT,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    tile.channelCount = channelPlanes.length;
+    this.writeChannelSettings(tile, channels);
 
     tile.bindGroup = this.device.createBindGroup({
       label: `slice ${id} bind group`,
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: tile.texture.createView() },
+        { binding: 0, resource: tile.channelTexture.createView({ dimension: "2d-array" }) },
         { binding: 1, resource: this.sampler },
+        { binding: 2, resource: { buffer: tile.settingsBuffer } },
       ],
     });
 
     tile.ready = true;
     tile.element.classList.remove("is-loading", "has-error");
     tile.stateElement.textContent = "Ready";
-    tile.canvas.style.aspectRatio = `${image.width} / ${image.height}`;
+    tile.canvas.style.aspectRatio = `${planeSet.width} / ${planeSet.height}`;
     this.requestRender();
+  }
+
+  updateChannelSettings(id: number, channels: readonly ChannelRenderSettings[]): void {
+    const tile = this.tiles.get(id);
+    if (!tile?.settingsBuffer) return;
+
+    this.writeChannelSettings(tile, channels);
+    this.requestRender();
+  }
+
+  private writeChannelSettings(tile: ImageTile, channels: readonly ChannelRenderSettings[]): void {
+    if (!tile.settingsBuffer) return;
+
+    const data = createChannelSettingsData(tile.channelCount, channels);
+    this.device.queue.writeBuffer(tile.settingsBuffer, 0, data);
   }
 
   setTileError(id: number, message: string): void {
@@ -268,7 +337,8 @@ export class ImageGridRenderer {
     for (const tile of this.tiles.values()) {
       this.resizeObserver.unobserve(tile.canvas);
       this.intersectionObserver.unobserve(tile.canvas);
-      tile.texture?.destroy();
+      tile.channelTexture?.destroy();
+      tile.settingsBuffer?.destroy();
     }
 
     this.tiles.clear();
@@ -361,8 +431,13 @@ function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
-function copyWithAlignedRows(source: Uint8Array, width: number, height: number, bytesPerRow: number): Uint8Array {
-  const tightBytesPerRow = width * 4;
+function copySingleChannelWithAlignedRows(
+  source: Uint8Array,
+  width: number,
+  height: number,
+  bytesPerRow: number,
+): Uint8Array {
+  const tightBytesPerRow = width;
   const aligned = new Uint8Array(bytesPerRow * height);
 
   for (let y = 0; y < height; y++) {
@@ -372,4 +447,36 @@ function copyWithAlignedRows(source: Uint8Array, width: number, height: number, 
   }
 
   return aligned;
+}
+
+function createChannelSettingsData(
+  channelCount: number,
+  channels: readonly ChannelRenderSettings[],
+): Float32Array {
+  const data = new Float32Array(CHANNEL_SETTINGS_FLOATS);
+
+  for (let index = 0; index < Math.min(channelCount, MAX_GPU_CHANNELS); index++) {
+    const channel = channels[index];
+    const color = parseHexColor(channel?.color);
+    const offset = index * 4;
+    data[offset] = color[0];
+    data[offset + 1] = color[1];
+    data[offset + 2] = color[2];
+    data[offset + 3] = channel?.enabled ? 1 : 0;
+  }
+
+  const detailsOffset = MAX_GPU_CHANNELS * 4;
+  data[detailsOffset] = Math.min(channelCount, MAX_GPU_CHANNELS);
+  return data;
+}
+
+function parseHexColor(color = "#ffffff"): [number, number, number] {
+  const match = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(color);
+  if (!match) return [1, 1, 1];
+
+  return [
+    Number.parseInt(match[1], 16) / 255,
+    Number.parseInt(match[2], 16) / 255,
+    Number.parseInt(match[3], 16) / 255,
+  ];
 }

@@ -7,6 +7,16 @@ export interface ZarrImageSource {
 
 export type DimensionAxis = "T" | "C" | "Z" | "Y" | "X";
 export type ZarrSelection = Array<number | null>;
+export type NumericTypedArray =
+  | Int8Array
+  | Uint8Array
+  | Uint8ClampedArray
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | Float32Array
+  | Float64Array;
 
 export interface TCZYXShape {
   t: number;
@@ -28,6 +38,27 @@ export interface ChannelRange {
   max: number;
 }
 
+export interface LoadedChannelPlane extends ChannelRange {
+  nativePixels: NumericTypedArray;
+  pixels: Uint8Array;
+  selection: ZarrSelection;
+}
+
+export interface LoadedPlaneSet {
+  width: number;
+  height: number;
+  channelPlanes: LoadedChannelPlane[];
+  timeIndex: number;
+  zIndex: number;
+  arrayShape: number[];
+  shapeTCZYX: TCZYXShape;
+  chunks: number[];
+  dtype: string;
+  arrayPath: string;
+  multiresolutionLevel: number;
+  resolutionTarget: number;
+}
+
 export interface ZarrImageMetadata {
   source: ZarrImageSource;
   arrayPath: string;
@@ -38,24 +69,6 @@ export interface ZarrImageMetadata {
   shapeTCZYX: TCZYXShape;
   chunks: number[];
   dtype: string;
-}
-
-export interface LoadedSlice {
-  rgba: Uint8Array;
-  width: number;
-  height: number;
-  channelRanges: ChannelRange[];
-  timeIndex: number;
-  zIndex: number;
-  channelIndices: number[];
-  arrayShape: number[];
-  shapeTCZYX: TCZYXShape;
-  chunks: number[];
-  dtype: string;
-  arrayPath: string;
-  multiresolutionLevel: number;
-  resolutionTarget: number;
-  selections: ZarrSelection[];
 }
 
 export interface RenderStats {
