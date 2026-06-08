@@ -32,14 +32,16 @@ const USE_ORCHESTRA_FIGURE_LAYOUT = true;
 interface LoadedImageState {
   source: ZarrImageSource;
   tileId: number;
-  channelThresholds: ChannelThresholdOverride[];
+  channelOverrides: ImageChannelOverride[];
   timeIndexOverride?: number;
   placement?: TilePlacement;
   metadata?: ZarrImageMetadata;
   planeSet?: LoadedPlaneSet;
 }
 
-interface ChannelThresholdOverride {
+interface ImageChannelOverride {
+  enabled: boolean | null;
+  color: string | null;
   min: number | null;
   max: number | null;
 }
@@ -166,7 +168,7 @@ async function loadSources(): Promise<void> {
     return {
       source: entry.source,
       tileId: tile.id,
-      channelThresholds: [],
+      channelOverrides: [],
       timeIndexOverride: entry.timeIndexOverride,
       placement: entry.placement,
     };
@@ -513,17 +515,38 @@ function createImageThresholdRow(
   const row = document.createElement("div");
   row.className = "image-threshold-row";
 
-  const channel = appState.channels[plane.channelIndex];
-  const label = document.createElement("div");
-  label.className = "image-threshold-channel";
+  const globalChannel = appState.channels[plane.channelIndex];
+  const isGloballyEnabled = globalChannel?.enabled ?? true;
+  const readChannelSettings = (): ChannelRenderSettings => getImageChannelSettings(imageState)[plane.channelIndex] ?? {
+    index: plane.channelIndex,
+    enabled: true,
+    color: DEFAULT_CHANNEL_COLORS[plane.channelIndex % DEFAULT_CHANNEL_COLORS.length],
+    min: null,
+    max: null,
+  };
 
-  const swatch = document.createElement("span");
-  swatch.className = "image-threshold-swatch";
-  swatch.style.background = channel?.color ?? DEFAULT_CHANNEL_COLORS[plane.channelIndex % DEFAULT_CHANNEL_COLORS.length];
+  const channelControl = document.createElement("div");
+  channelControl.className = "image-channel-control";
+
+  const enabled = document.createElement("input");
+  enabled.type = "checkbox";
+  enabled.checked = readChannelSettings().enabled;
+  enabled.disabled = !isGloballyEnabled;
+  enabled.title = isGloballyEnabled
+    ? `Show C${plane.channelIndex} in this image`
+    : `C${plane.channelIndex} is disabled by the global channel setting`;
+  enabled.setAttribute("aria-label", `Show C${plane.channelIndex} in this image`);
+
+  const color = document.createElement("input");
+  color.type = "color";
+  color.value = readChannelSettings().color;
+  color.disabled = !isGloballyEnabled;
+  color.title = `C${plane.channelIndex} color for this image`;
+  color.setAttribute("aria-label", `C${plane.channelIndex} color for this image`);
 
   const labelText = document.createElement("span");
   labelText.textContent = `C${plane.channelIndex}`;
-  label.append(swatch, labelText);
+  channelControl.append(enabled, color, labelText);
 
   const domain = getPlaneThresholdDomain(plane);
   const minControl = createPopupThresholdControl("Min", `C${plane.channelIndex} min threshold`, domain);
@@ -535,18 +558,14 @@ function createImageThresholdRow(
   autoButton.textContent = "Auto";
 
   const readRange = (): { min: number; max: number } => {
-    const channelSettings = getImageChannelSettings(imageState)[plane.channelIndex] ?? {
-      index: plane.channelIndex,
-      enabled: true,
-      color: swatch.style.background,
-      min: null,
-      max: null,
-    };
-    return getChannelThresholdDisplayRange(channelSettings, getPlaneAutoThresholdRange(plane));
+    return getChannelThresholdDisplayRange(readChannelSettings(), getPlaneAutoThresholdRange(plane));
   };
 
   const syncControls = (): void => {
+    const channelSettings = readChannelSettings();
     const range = readRange();
+    enabled.checked = channelSettings.enabled;
+    color.value = channelSettings.color;
     minControl.slider.value = String(clampThresholdValue(range.min, domain));
     minControl.number.value = formatThresholdInputValue(range.min);
     maxControl.slider.value = String(clampThresholdValue(range.max, domain));
@@ -582,6 +601,14 @@ function createImageThresholdRow(
     updateImageTileChannelSettings(imageState);
   };
 
+  enabled.addEventListener("change", () => {
+    setImageChannelEnabled(imageState, plane.channelIndex, enabled.checked);
+    updateImageTileChannelSettings(imageState);
+  });
+  color.addEventListener("input", () => {
+    setImageChannelColor(imageState, plane.channelIndex, color.value);
+    updateImageTileChannelSettings(imageState);
+  });
   minControl.slider.addEventListener("input", () => writeRange("min", minControl.slider.value));
   minControl.number.addEventListener("input", () => writeRange("min", minControl.number.value, { syncInvalid: false }));
   minControl.number.addEventListener("change", () => writeRange("min", minControl.number.value));
@@ -597,7 +624,7 @@ function createImageThresholdRow(
   });
 
   syncControls();
-  row.append(label, minControl.element, maxControl.element, autoButton);
+  row.append(channelControl, minControl.element, maxControl.element, autoButton);
   return row;
 }
 
@@ -636,6 +663,7 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   checkbox.checked = channel.enabled;
   checkbox.addEventListener("change", () => {
     channel.enabled = checkbox.checked;
+    applyGlobalChannelEnabled(channel.index, channel.enabled);
     renderControls();
     updateCachedChannelRendering();
   });
@@ -646,6 +674,7 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   color.disabled = !channel.enabled;
   color.addEventListener("input", () => {
     channel.color = color.value;
+    applyGlobalChannelColor(channel.index, channel.color);
     updateCachedChannelRendering();
   });
 
@@ -727,6 +756,18 @@ function applyGlobalAutoThreshold(channelIndex: number): void {
   statusText.textContent = `Set C${channelIndex} auto thresholds for ${updated} image${updated === 1 ? "" : "s"}.`;
 }
 
+function applyGlobalChannelEnabled(channelIndex: number, enabled: boolean): void {
+  for (const imageState of appState.images) {
+    setImageChannelEnabled(imageState, channelIndex, enabled);
+  }
+}
+
+function applyGlobalChannelColor(channelIndex: number, color: string): void {
+  for (const imageState of appState.images) {
+    setImageChannelColor(imageState, channelIndex, color);
+  }
+}
+
 function applyImageAutoThreshold(imageState: LoadedImageState, channelIndex: number): boolean {
   const autoRange = getImageChannelAutoThresholdRange(imageState, channelIndex);
   if (!autoRange) return false;
@@ -741,20 +782,38 @@ function setImageChannelThreshold(
   min: number,
   max: number,
 ): void {
-  const override = getImageChannelThresholdOverride(imageState, channelIndex);
+  const override = getImageChannelOverride(imageState, channelIndex);
   override.min = min;
   override.max = max;
 }
 
-function getImageChannelThresholdOverride(
+function setImageChannelEnabled(
   imageState: LoadedImageState,
   channelIndex: number,
-): ChannelThresholdOverride {
-  const existing = imageState.channelThresholds[channelIndex];
+  enabled: boolean,
+): void {
+  const override = getImageChannelOverride(imageState, channelIndex);
+  override.enabled = enabled;
+}
+
+function setImageChannelColor(
+  imageState: LoadedImageState,
+  channelIndex: number,
+  color: string,
+): void {
+  const override = getImageChannelOverride(imageState, channelIndex);
+  override.color = color;
+}
+
+function getImageChannelOverride(
+  imageState: LoadedImageState,
+  channelIndex: number,
+): ImageChannelOverride {
+  const existing = imageState.channelOverrides[channelIndex];
   if (existing) return existing;
 
-  const created = { min: null, max: null };
-  imageState.channelThresholds[channelIndex] = created;
+  const created = { enabled: null, color: null, min: null, max: null };
+  imageState.channelOverrides[channelIndex] = created;
   return created;
 }
 
@@ -840,11 +899,13 @@ function formatNumber(value: number): string {
 
 function getImageChannelSettings(imageState: LoadedImageState): ChannelRenderSettings[] {
   return appState.channels.map((channel) => {
-    const thresholdOverride = imageState.channelThresholds[channel.index];
+    const channelOverride = imageState.channelOverrides[channel.index];
     return {
       ...channel,
-      min: thresholdOverride?.min ?? channel.min,
-      max: thresholdOverride?.max ?? channel.max,
+      enabled: channel.enabled && (channelOverride?.enabled ?? true),
+      color: channelOverride?.color ?? channel.color,
+      min: channelOverride?.min ?? channel.min,
+      max: channelOverride?.max ?? channel.max,
     };
   });
 }

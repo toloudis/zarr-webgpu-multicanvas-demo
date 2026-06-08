@@ -414,7 +414,7 @@ h1 {
 
 .image-threshold-row {
   display: grid;
-  grid-template-columns: 54px minmax(180px, 1fr) minmax(180px, 1fr) 54px;
+  grid-template-columns: 96px minmax(170px, 1fr) minmax(170px, 1fr) 54px;
   gap: 10px;
   align-items: center;
   min-width: 0;
@@ -426,20 +426,31 @@ h1 {
   border-bottom: 0;
 }
 
-.image-threshold-channel {
-  display: inline-flex;
+.image-channel-control {
+  display: grid;
+  grid-template-columns: 16px 30px 1fr;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
+  min-width: 0;
   color: #263435;
   font-size: 0.8rem;
   font-weight: 780;
 }
 
-.image-threshold-swatch {
+.image-channel-control input[type="checkbox"] {
   width: 16px;
   height: 16px;
+  margin: 0;
+  accent-color: #1d6f68;
+}
+
+.image-channel-control input[type="color"] {
+  width: 30px;
+  height: 24px;
+  padding: 0;
   border: 1px solid #c8d2ce;
-  border-radius: 50%;
+  border-radius: 4px;
+  background: transparent;
 }
 
 .image-threshold-control {
