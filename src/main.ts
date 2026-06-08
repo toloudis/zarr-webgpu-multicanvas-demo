@@ -2,7 +2,13 @@ import "./styles.css";
 import { loadChannelPlaneSet, loadImageMetadata } from "./zarrLoader";
 import { orchestraFigureLayout } from "./orchestraFigureLayout";
 import { ZARR_IMAGE_SOURCES } from "./zarrSources";
-import type { ChannelRenderSettings, LoadedPlaneSet, ZarrImageMetadata, ZarrImageSource } from "./types";
+import type {
+  ChannelRenderSettings,
+  LoadedChannelPlane,
+  LoadedPlaneSet,
+  ZarrImageMetadata,
+  ZarrImageSource,
+} from "./types";
 import {
   createImageGridRenderer,
   type FigureGridLayout,
@@ -26,10 +32,16 @@ const USE_ORCHESTRA_FIGURE_LAYOUT = true;
 interface LoadedImageState {
   source: ZarrImageSource;
   tileId: number;
+  channelThresholds: ChannelThresholdOverride[];
   timeIndexOverride?: number;
   placement?: TilePlacement;
   metadata?: ZarrImageMetadata;
   planeSet?: LoadedPlaneSet;
+}
+
+interface ChannelThresholdOverride {
+  min: number | null;
+  max: number | null;
 }
 
 interface ImageLoadEntry {
@@ -78,6 +90,8 @@ let renderer: ImageGridRenderer | undefined;
 let currentLoadAbortController: AbortController | undefined;
 let currentRenderAbortController: AbortController | undefined;
 let resolutionReloadTimer = 0;
+let closeActiveSettingsPopup: (() => void) | undefined;
+let activeSettingsPopupTileId: number | undefined;
 
 init().catch((error) => {
   console.error(error);
@@ -108,6 +122,7 @@ async function init(): Promise<void> {
       renderStats.textContent = `${stats.rendered} rendered / ${stats.visible} visible`;
     },
     (tileId) => openTileInVole(tileId),
+    (tileId, anchor) => openTileSettings(tileId, anchor),
   );
   statusText.textContent = "WebGPU ready.";
   renderControls();
@@ -121,6 +136,7 @@ async function loadSources(): Promise<void> {
   window.clearTimeout(resolutionReloadTimer);
   currentLoadAbortController?.abort();
   currentRenderAbortController?.abort();
+  closeActiveSettingsPopup?.();
   const abortController = new AbortController();
   currentLoadAbortController = abortController;
   const imageEntries = getImageLoadEntries();
@@ -150,6 +166,7 @@ async function loadSources(): Promise<void> {
     return {
       source: entry.source,
       tileId: tile.id,
+      channelThresholds: [],
       timeIndexOverride: entry.timeIndexOverride,
       placement: entry.placement,
     };
@@ -200,6 +217,7 @@ async function renderLoadedImages(): Promise<void> {
   if (imagesWithMetadata.length === 0) return;
 
   currentRenderAbortController?.abort();
+  closeActiveSettingsPopup?.();
   const abortController = new AbortController();
   currentRenderAbortController = abortController;
 
@@ -220,9 +238,10 @@ async function renderLoadedImages(): Promise<void> {
         signal: abortController.signal,
       });
 
-      activeRenderer.uploadChannelPlanes(imageState.tileId, imageState.planeSet, appState.channels);
+      const channels = getImageChannelSettings(imageState);
+      activeRenderer.uploadChannelPlanes(imageState.tileId, imageState.planeSet, channels);
       activeRenderer.updateTile(imageState.tileId, {
-        subtitle: formatPlaneSetSubtitle(imageState.planeSet, appState.channels),
+        subtitle: formatPlaneSetSubtitle(imageState.planeSet, channels),
       });
     } catch (error) {
       if (abortController.signal.aborted) return;
@@ -235,6 +254,7 @@ async function renderLoadedImages(): Promise<void> {
   const results = await runLimited(tasks, 4);
   if (abortController.signal.aborted) return;
 
+  renderControls();
   const failed = results.filter((result) => result.status === "rejected").length;
   const rendered = imagesWithMetadata.length - failed;
   statusText.textContent = failed
@@ -252,14 +272,26 @@ function updateCachedChannelRendering(): void {
     return;
   }
 
-  for (const imageState of imagesWithPlanes) {
-    activeRenderer.updateChannelSettings(imageState.tileId, appState.channels);
-    activeRenderer.updateTile(imageState.tileId, {
-      subtitle: formatPlaneSetSubtitle(imageState.planeSet, appState.channels),
-    });
-  }
+  updateLoadedTileChannelSettings();
 
   statusText.textContent = `Updated channel shader settings for ${imagesWithPlanes.length} image${imagesWithPlanes.length === 1 ? "" : "s"}.`;
+}
+
+function updateLoadedTileChannelSettings(): void {
+  for (const imageState of appState.images.filter(hasCurrentPlaneSet)) {
+    updateImageTileChannelSettings(imageState);
+  }
+}
+
+function updateImageTileChannelSettings(imageState: LoadedImageState): void {
+  const activeRenderer = renderer;
+  if (!activeRenderer || !hasCurrentPlaneSet(imageState)) return;
+
+  const channels = getImageChannelSettings(imageState);
+  activeRenderer.updateChannelSettings(imageState.tileId, channels);
+  activeRenderer.updateTile(imageState.tileId, {
+    subtitle: formatPlaneSetSubtitle(imageState.planeSet, channels),
+  });
 }
 
 function configureGlobalStateFromImages(): void {
@@ -353,12 +385,229 @@ function openTileInVole(tileId: number): void {
   statusText.textContent = "Opened image in Vol-E.";
 }
 
+function openTileSettings(tileId: number, anchor: HTMLElement): void {
+  const imageState = appState.images.find((item) => item.tileId === tileId);
+  if (!imageState || !hasCurrentPlaneSet(imageState)) {
+    statusText.textContent = "Image data is not ready for per-image settings yet.";
+    return;
+  }
+
+  if (activeSettingsPopupTileId === tileId && closeActiveSettingsPopup) {
+    closeActiveSettingsPopup();
+    return;
+  }
+
+  closeActiveSettingsPopup?.();
+
+  const popup = document.createElement("div");
+  popup.className = "image-settings-popup";
+  popup.role = "dialog";
+  popup.ariaModal = "false";
+  popup.tabIndex = -1;
+  popup.style.visibility = "hidden";
+
+  const panel = document.createElement("div");
+  panel.className = "image-settings-panel";
+
+  const header = document.createElement("div");
+  header.className = "image-settings-header";
+
+  const titleBlock = document.createElement("div");
+  titleBlock.className = "image-settings-title";
+
+  const title = document.createElement("h2");
+  title.textContent = imageState.source.label || "Image settings";
+
+  const details = document.createElement("p");
+  details.textContent = [
+    `${imageState.planeSet.width} x ${imageState.planeSet.height}`,
+    `T${imageState.planeSet.timeIndex} Z${imageState.planeSet.zIndex}`,
+    `level ${imageState.planeSet.multiresolutionLevel}`,
+  ].join("  ");
+
+  titleBlock.append(title, details);
+
+  const closeButton = document.createElement("button");
+  closeButton.type = "button";
+  closeButton.className = "popup-close-button";
+  closeButton.textContent = "Close";
+
+  header.append(titleBlock, closeButton);
+
+  const rows = document.createElement("div");
+  rows.className = "image-threshold-list";
+  for (const plane of imageState.planeSet.channelPlanes.slice().sort((a, b) => a.channelIndex - b.channelIndex)) {
+    rows.append(createImageThresholdRow(imageState, plane));
+  }
+
+  panel.append(header, rows);
+  popup.append(panel);
+  document.body.append(popup);
+
+  const positionPopup = (): void => positionSettingsPopup(popup, anchor);
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === "Escape") {
+      closeActiveSettingsPopup?.();
+    }
+  };
+  const onPointerDown = (event: PointerEvent): void => {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+
+    if (!popup.contains(target) && !anchor.contains(target)) {
+      closeActiveSettingsPopup?.();
+    }
+  };
+  let pointerListenerAttached = false;
+  const pointerListenerTimer = window.setTimeout(() => {
+    pointerListenerAttached = true;
+    document.addEventListener("pointerdown", onPointerDown);
+  }, 0);
+
+  closeActiveSettingsPopup = () => {
+    window.clearTimeout(pointerListenerTimer);
+    if (pointerListenerAttached) {
+      document.removeEventListener("pointerdown", onPointerDown);
+    }
+    document.removeEventListener("keydown", onKeyDown);
+    window.removeEventListener("resize", positionPopup);
+    window.removeEventListener("scroll", positionPopup, true);
+    popup.remove();
+    closeActiveSettingsPopup = undefined;
+    activeSettingsPopupTileId = undefined;
+  };
+  activeSettingsPopupTileId = tileId;
+  closeButton.addEventListener("click", () => closeActiveSettingsPopup?.());
+  document.addEventListener("keydown", onKeyDown);
+  window.addEventListener("resize", positionPopup);
+  window.addEventListener("scroll", positionPopup, true);
+
+  positionPopup();
+  popup.style.visibility = "";
+  popup.focus({ preventScroll: true });
+}
+
+function positionSettingsPopup(popup: HTMLElement, anchor: HTMLElement): void {
+  const margin = 10;
+  const gap = 8;
+  const anchorRect = anchor.getBoundingClientRect();
+  const popupRect = popup.getBoundingClientRect();
+  const left = Math.max(
+    margin,
+    Math.min(anchorRect.right - popupRect.width, window.innerWidth - popupRect.width - margin),
+  );
+  const belowTop = anchorRect.bottom + gap;
+  const aboveTop = anchorRect.top - popupRect.height - gap;
+  const top = belowTop + popupRect.height <= window.innerHeight - margin
+    ? belowTop
+    : Math.max(margin, aboveTop);
+
+  popup.style.left = `${left}px`;
+  popup.style.top = `${top}px`;
+}
+
+function createImageThresholdRow(
+  imageState: LoadedImageState & { metadata: ZarrImageMetadata; planeSet: LoadedPlaneSet },
+  plane: LoadedChannelPlane,
+): HTMLElement {
+  const row = document.createElement("div");
+  row.className = "image-threshold-row";
+
+  const channel = appState.channels[plane.channelIndex];
+  const label = document.createElement("div");
+  label.className = "image-threshold-channel";
+
+  const swatch = document.createElement("span");
+  swatch.className = "image-threshold-swatch";
+  swatch.style.background = channel?.color ?? DEFAULT_CHANNEL_COLORS[plane.channelIndex % DEFAULT_CHANNEL_COLORS.length];
+
+  const labelText = document.createElement("span");
+  labelText.textContent = `C${plane.channelIndex}`;
+  label.append(swatch, labelText);
+
+  const domain = getPlaneThresholdDomain(plane);
+  const minControl = createPopupThresholdControl("Min", `C${plane.channelIndex} min threshold`, domain);
+  const maxControl = createPopupThresholdControl("Max", `C${plane.channelIndex} max threshold`, domain);
+
+  const autoButton = document.createElement("button");
+  autoButton.type = "button";
+  autoButton.className = "image-threshold-auto-button";
+  autoButton.textContent = "Auto";
+
+  const readRange = (): { min: number; max: number } => {
+    const channelSettings = getImageChannelSettings(imageState)[plane.channelIndex] ?? {
+      index: plane.channelIndex,
+      enabled: true,
+      color: swatch.style.background,
+      min: null,
+      max: null,
+    };
+    return getChannelThresholdDisplayRange(channelSettings, getPlaneAutoThresholdRange(plane));
+  };
+
+  const syncControls = (): void => {
+    const range = readRange();
+    minControl.slider.value = String(clampThresholdValue(range.min, domain));
+    minControl.number.value = formatThresholdInputValue(range.min);
+    maxControl.slider.value = String(clampThresholdValue(range.max, domain));
+    maxControl.number.value = formatThresholdInputValue(range.max);
+  };
+
+  const writeRange = (
+    key: "min" | "max",
+    value: unknown,
+    options: { syncInvalid?: boolean } = {},
+  ): void => {
+    const parsed = parseOptionalNumber(value);
+    if (parsed === null) {
+      if (options.syncInvalid ?? true) {
+        syncControls();
+      }
+      return;
+    }
+
+    const current = readRange();
+    let min = current.min;
+    let max = current.max;
+    if (key === "min") {
+      min = clampThresholdValue(parsed, domain);
+      if (max < min) max = min;
+    } else {
+      max = clampThresholdValue(parsed, domain);
+      if (min > max) min = max;
+    }
+
+    setImageChannelThreshold(imageState, plane.channelIndex, min, max);
+    syncControls();
+    updateImageTileChannelSettings(imageState);
+  };
+
+  minControl.slider.addEventListener("input", () => writeRange("min", minControl.slider.value));
+  minControl.number.addEventListener("input", () => writeRange("min", minControl.number.value, { syncInvalid: false }));
+  minControl.number.addEventListener("change", () => writeRange("min", minControl.number.value));
+  maxControl.slider.addEventListener("input", () => writeRange("max", maxControl.slider.value));
+  maxControl.number.addEventListener("input", () => writeRange("max", maxControl.number.value, { syncInvalid: false }));
+  maxControl.number.addEventListener("change", () => writeRange("max", maxControl.number.value));
+  autoButton.addEventListener("click", () => {
+    if (!applyImageAutoThreshold(imageState, plane.channelIndex)) return;
+
+    syncControls();
+    updateImageTileChannelSettings(imageState);
+    statusText.textContent = `Set C${plane.channelIndex} auto thresholds for ${imageState.source.label || "image"}.`;
+  });
+
+  syncControls();
+  row.append(label, minControl.element, maxControl.element, autoButton);
+  return row;
+}
+
 function buildVoleUrl(imageState: LoadedImageState & { metadata: ZarrImageMetadata }): string {
   const { metadata } = imageState;
   const url = new URL(VOLE_VIEWER_URL);
   const zIndex = clampIndex(appState.currentZ, metadata.shapeTCZYX.z);
   const timeIndex = clampIndex(getImageTimeIndex(imageState), metadata.shapeTCZYX.t);
   const zSlice = metadata.shapeTCZYX.z <= 1 ? 0.5 : zIndex / (metadata.shapeTCZYX.z - 1);
+  const channels = getResolvedChannelSettingsForImage(imageState);
 
   url.searchParams.set("url", metadata.source.url);
   url.searchParams.set("view", "Z");
@@ -366,21 +615,21 @@ function buildVoleUrl(imageState: LoadedImageState & { metadata: ZarrImageMetada
   url.searchParams.set("slice", `0.5,0.5,${formatUnitInterval(zSlice)}`);
 
   for (let index = 0; index < metadata.shapeTCZYX.c; index++) {
-    const channel = appState.channels[index];
+    const channel = channels[index];
     if (!channel?.enabled) {
       url.searchParams.set(`c${index}`, "ven:0");
       continue;
     }
 
-    url.searchParams.set(`c${index}`, `ven:1,col:${stripHexPrefix(channel.color)}`);
+    url.searchParams.set(`c${index}`, formatVoleChannelSetting(channel));
   }
 
   return url.toString();
 }
 
 function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
-  const label = document.createElement("label");
-  label.className = "channel-control";
+  const control = document.createElement("div");
+  control.className = "channel-control";
 
   const checkbox = document.createElement("input");
   checkbox.type = "checkbox";
@@ -403,31 +652,110 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   const name = document.createElement("span");
   name.textContent = `C${channel.index}`;
 
-  const min = createThresholdInput(channel, "min");
-  const max = createThresholdInput(channel, "max");
+  const auto = document.createElement("button");
+  const autoRange = getChannelAutoThresholdRange(channel.index);
+  auto.type = "button";
+  auto.className = "channel-auto-button";
+  auto.textContent = "Auto";
+  auto.disabled = !channel.enabled || !autoRange;
+  auto.title = `Set C${channel.index} auto thresholds for every loaded image`;
+  auto.addEventListener("click", () => {
+    applyGlobalAutoThreshold(channel.index);
+  });
 
-  label.append(checkbox, color, name, min, max);
-  return label;
+  control.append(checkbox, color, name, auto);
+  return control;
 }
 
-function createThresholdInput(
-  channel: ChannelRenderSettings,
-  key: "min" | "max",
-): HTMLInputElement {
-  const input = document.createElement("input");
-  input.type = "number";
-  input.inputMode = "decimal";
-  input.step = "1";
-  input.placeholder = `auto ${key}`;
-  input.value = formatThresholdInputValue(channel[key]);
-  input.disabled = !channel.enabled;
-  input.title = `C${channel.index} ${key} threshold`;
-  input.setAttribute("aria-label", `C${channel.index} ${key} threshold`);
-  input.addEventListener("input", () => {
-    channel[key] = parseOptionalNumber(input.value);
-    updateCachedChannelRendering();
-  });
-  return input;
+interface ThresholdDomain {
+  min: number;
+  max: number;
+  step: string;
+}
+
+interface PopupThresholdControl {
+  element: HTMLElement;
+  slider: HTMLInputElement;
+  number: HTMLInputElement;
+}
+
+function createPopupThresholdControl(
+  labelText: string,
+  ariaLabel: string,
+  domain: ThresholdDomain,
+): PopupThresholdControl {
+  const element = document.createElement("label");
+  element.className = "image-threshold-control";
+
+  const label = document.createElement("span");
+  label.textContent = labelText;
+
+  const slider = document.createElement("input");
+  slider.type = "range";
+  slider.min = String(domain.min);
+  slider.max = String(domain.max);
+  slider.step = domain.step;
+  slider.setAttribute("aria-label", ariaLabel);
+
+  const number = document.createElement("input");
+  number.type = "number";
+  number.inputMode = "decimal";
+  number.min = String(domain.min);
+  number.max = String(domain.max);
+  number.step = domain.step;
+  number.setAttribute("aria-label", ariaLabel);
+
+  element.append(label, slider, number);
+  return { element, slider, number };
+}
+
+function applyGlobalAutoThreshold(channelIndex: number): void {
+  let updated = 0;
+  for (const imageState of appState.images.filter(hasCurrentPlaneSet)) {
+    if (applyImageAutoThreshold(imageState, channelIndex)) {
+      updated++;
+    }
+  }
+
+  renderControls();
+  if (updated === 0) {
+    statusText.textContent = `No loaded C${channelIndex} planes are ready for auto thresholds.`;
+    return;
+  }
+
+  updateLoadedTileChannelSettings();
+  statusText.textContent = `Set C${channelIndex} auto thresholds for ${updated} image${updated === 1 ? "" : "s"}.`;
+}
+
+function applyImageAutoThreshold(imageState: LoadedImageState, channelIndex: number): boolean {
+  const autoRange = getImageChannelAutoThresholdRange(imageState, channelIndex);
+  if (!autoRange) return false;
+
+  setImageChannelThreshold(imageState, channelIndex, autoRange.min, autoRange.max);
+  return true;
+}
+
+function setImageChannelThreshold(
+  imageState: LoadedImageState,
+  channelIndex: number,
+  min: number,
+  max: number,
+): void {
+  const override = getImageChannelThresholdOverride(imageState, channelIndex);
+  override.min = min;
+  override.max = max;
+}
+
+function getImageChannelThresholdOverride(
+  imageState: LoadedImageState,
+  channelIndex: number,
+): ChannelThresholdOverride {
+  const existing = imageState.channelThresholds[channelIndex];
+  if (existing) return existing;
+
+  const created = { min: null, max: null };
+  imageState.channelThresholds[channelIndex] = created;
+  return created;
 }
 
 async function runLimited<T>(
@@ -510,8 +838,130 @@ function formatNumber(value: number): string {
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toPrecision(4);
 }
 
-function formatThresholdInputValue(value: number | null): string {
-  return value === null ? "" : String(value);
+function getImageChannelSettings(imageState: LoadedImageState): ChannelRenderSettings[] {
+  return appState.channels.map((channel) => {
+    const thresholdOverride = imageState.channelThresholds[channel.index];
+    return {
+      ...channel,
+      min: thresholdOverride?.min ?? channel.min,
+      max: thresholdOverride?.max ?? channel.max,
+    };
+  });
+}
+
+function getResolvedChannelSettingsForImage(imageState: LoadedImageState): ChannelRenderSettings[] {
+  return getImageChannelSettings(imageState).map((channel) => {
+    const autoRange = getImageChannelAutoThresholdRange(imageState, channel.index)
+      ?? getChannelAutoThresholdRange(channel.index);
+    const { min, max } = getChannelThresholdDisplayRange(channel, autoRange);
+    return { ...channel, min, max };
+  });
+}
+
+function getChannelThresholdDisplayRange(
+  channel: ChannelRenderSettings,
+  autoRange = getChannelAutoThresholdRange(channel.index),
+): { min: number; max: number } {
+  const min = channel.min ?? autoRange?.min ?? 0;
+  let max = channel.max ?? autoRange?.max ?? min + 1;
+
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return { min, max };
+}
+
+function getImageChannelAutoThresholdRange(
+  imageState: LoadedImageState,
+  channelIndex: number,
+): { min: number; max: number } | undefined {
+  if (!hasCurrentPlaneSet(imageState)) return undefined;
+
+  const plane = imageState.planeSet.channelPlanes.find((item) => item.channelIndex === channelIndex);
+  if (!plane) return undefined;
+
+  const min = plane.autoMin;
+  let max = plane.autoMax;
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return { min, max };
+}
+
+function getPlaneAutoThresholdRange(plane: LoadedChannelPlane): { min: number; max: number } {
+  const min = plane.autoMin;
+  let max = plane.autoMax;
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return { min, max };
+}
+
+function getPlaneThresholdDomain(plane: LoadedChannelPlane): ThresholdDomain {
+  if (plane.nativePixels instanceof Uint8Array || plane.nativePixels instanceof Uint8ClampedArray) {
+    return { min: 0, max: 255, step: "1" };
+  }
+
+  if (plane.nativePixels instanceof Uint16Array) {
+    return { min: 0, max: 65535, step: "1" };
+  }
+
+  const min = Math.min(plane.min, plane.autoMin);
+  let max = Math.max(plane.max, plane.autoMax);
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return { min, max, step: "any" };
+}
+
+function clampThresholdValue(value: number, domain: ThresholdDomain): number {
+  if (!Number.isFinite(value)) return domain.min;
+  return Math.max(domain.min, Math.min(value, domain.max));
+}
+
+function getChannelAutoThresholdRange(channelIndex: number): { min: number; max: number } | undefined {
+  const autoRanges = appState.images
+    .filter(hasCurrentPlaneSet)
+    .flatMap((imageState) => imageState.planeSet.channelPlanes
+      .filter((plane) => plane.channelIndex === channelIndex)
+      .map((plane) => ({ min: plane.autoMin, max: plane.autoMax })));
+
+  if (autoRanges.length === 0) return undefined;
+
+  const min = Math.min(...autoRanges.map((range) => range.min));
+  let max = Math.max(...autoRanges.map((range) => range.max));
+
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return { min, max };
+}
+
+function formatThresholdInputValue(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (Number.isInteger(value)) return String(value);
+  return Number(value.toPrecision(6)).toString();
+}
+
+function formatVoleChannelSetting(channel: ChannelRenderSettings): string {
+  const { min, max } = getChannelThresholdDisplayRange(channel);
+  return [
+    "ven:1",
+    `col:${stripHexPrefix(channel.color)}`,
+    `min:${formatVoleNumber(min)}`,
+    `max:${formatVoleNumber(max)}`,
+  ].join(",");
+}
+
+function formatVoleNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  if (Number.isInteger(value)) return String(value);
+  return Number(value.toPrecision(8)).toString();
 }
 
 function parseOptionalNumber(value: unknown): number | null {

@@ -90,6 +90,7 @@ fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
 
 type StatsCallback = (stats: RenderStats) => void;
 type TileClickCallback = (tileId: number) => void;
+type TileSettingsClickCallback = (tileId: number, anchor: HTMLElement) => void;
 
 interface TileText {
   title: string;
@@ -153,6 +154,7 @@ export async function createImageGridRenderer(
   gridElement: HTMLElement,
   onStats?: StatsCallback,
   onTileClick?: TileClickCallback,
+  onTileSettingsClick?: TileSettingsClickCallback,
 ): Promise<ImageGridRenderer> {
   if (!navigator.gpu) {
     throw new Error("WebGPU is not available in this browser.");
@@ -164,7 +166,7 @@ export async function createImageGridRenderer(
   }
 
   const device = await adapter.requestDevice();
-  return new ImageGridRenderer(device, gridElement, onStats, onTileClick);
+  return new ImageGridRenderer(device, gridElement, onStats, onTileClick, onTileSettingsClick);
 }
 
 export class ImageGridRenderer {
@@ -172,6 +174,7 @@ export class ImageGridRenderer {
   private readonly gridElement: HTMLElement;
   private readonly onStats?: StatsCallback;
   private readonly onTileClick?: TileClickCallback;
+  private readonly onTileSettingsClick?: TileSettingsClickCallback;
   private readonly presentationFormat: GPUTextureFormat;
   private readonly pipeline: GPURenderPipeline;
   private readonly resizeObserver: ResizeObserver;
@@ -187,11 +190,13 @@ export class ImageGridRenderer {
     gridElement: HTMLElement,
     onStats?: StatsCallback,
     onTileClick?: TileClickCallback,
+    onTileSettingsClick?: TileSettingsClickCallback,
   ) {
     this.device = device;
     this.gridElement = gridElement;
     this.onStats = onStats;
     this.onTileClick = onTileClick;
+    this.onTileSettingsClick = onTileSettingsClick;
     this.presentationFormat = navigator.gpu.getPreferredCanvasFormat();
 
     this.pipeline = device.createRenderPipeline({
@@ -280,7 +285,17 @@ export class ImageGridRenderer {
     stateElement.className = "tile-state";
     stateElement.textContent = "Loading";
 
-    header.append(titleElement, subtitleElement, stateElement);
+    const settingsButton = document.createElement("button");
+    settingsButton.type = "button";
+    settingsButton.className = "tile-settings-button";
+    settingsButton.textContent = "Settings";
+    settingsButton.addEventListener("click", () => this.onTileSettingsClick?.(id, settingsButton));
+
+    const actions = document.createElement("div");
+    actions.className = "tile-actions";
+    actions.append(settingsButton, stateElement);
+
+    header.append(titleElement, subtitleElement, actions);
     tileElement.append(canvas, header);
     this.gridElement.append(tileElement);
 
