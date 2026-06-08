@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Zarr WebGPU Multi-Canvas Grid</title>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="control-band" aria-label="Zarr slice controls">
+        <div class="brand-block">
+          <p class="eyebrow">WebGPU Zarr Grid</p>
+          <h1>Middle-Z canvases</h1>
+        </div>
+
+        <div class="controls">
+          <button id="load-button" class="primary-button" type="button">
+            <span class="button-mark" aria-hidden="true"></span>
+            Load
+          </button>
+        </div>
+      </section>
+
+      <section class="status-strip" aria-live="polite">
+        <span id="status-text">Waiting for WebGPU.</span>
+        <span id="render-stats">0 visible</span>
+      </section>
+
+      <section id="canvas-grid" class="canvas-grid" aria-label="Loaded image slices"></section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

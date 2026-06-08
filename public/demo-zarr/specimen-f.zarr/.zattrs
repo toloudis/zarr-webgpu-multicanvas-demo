@@ -1,0 +1,10 @@
+{
+  "_ARRAY_DIMENSIONS": [
+    "t",
+    "c",
+    "z",
+    "y",
+    "x"
+  ],
+  "description": "Synthetic TCZYX uint8 fixture for the WebGPU multi-canvas demo."
+}
