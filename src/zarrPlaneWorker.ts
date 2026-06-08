@@ -1,5 +1,6 @@
 import * as zarr from "zarrita";
-import type { LoadedChannelPlane, NumericTypedArray } from "./types";
+import { calculateFijiAutoLutStats } from "./fijiAutoLut";
+import type { ChannelHistogram, LoadedChannelPlane, NumericTypedArray } from "./types";
 import type {
   ZarrPlaneLoadRequest,
   ZarrPlaneWorkerRequest,
@@ -20,9 +21,11 @@ interface WorkerContext {
 
 interface PlanePixels {
   nativePixels: NumericTypedArray;
-  pixels: Uint8Array;
   min: number;
   max: number;
+  autoMin: number;
+  autoMax: number;
+  histogram: ChannelHistogram;
 }
 
 const workerContext = self as unknown as WorkerContext;
@@ -60,13 +63,15 @@ async function loadPlane(request: ZarrPlaneLoadRequest): Promise<void> {
       );
     }
 
-    const planePixels = normalizeToLuminance(view, request.width, request.height);
+    const planePixels = copyNativePlane(view, request.width, request.height);
     const plane: LoadedChannelPlane = {
       channelIndex: request.channelIndex,
       nativePixels: planePixels.nativePixels,
-      pixels: planePixels.pixels,
+      histogram: planePixels.histogram,
       min: planePixels.min,
       max: planePixels.max,
+      autoMin: planePixels.autoMin,
+      autoMax: planePixels.autoMax,
       selection: request.selection,
     };
 
@@ -74,7 +79,7 @@ async function loadPlane(request: ZarrPlaneLoadRequest): Promise<void> {
       { type: "loaded", id: request.id, plane },
       [
         plane.nativePixels.buffer as ArrayBuffer,
-        plane.pixels.buffer as ArrayBuffer,
+        plane.histogram.bins.buffer as ArrayBuffer,
       ],
     );
   } catch (error) {
@@ -100,7 +105,7 @@ async function openArray(
   return zarr.open(arrayPath ? root.resolve(arrayPath) : root, { kind: "array", signal });
 }
 
-function normalizeToLuminance(view: ChunkView, width: number, height: number): PlanePixels {
+function copyNativePlane(view: ChunkView, width: number, height: number): PlanePixels {
   const { data, stride } = view;
   const offset = view.offset ?? 0;
   const strideY = stride?.[0] ?? width;
@@ -124,17 +129,19 @@ function normalizeToLuminance(view: ChunkView, width: number, height: number): P
     max = 1;
   }
 
-  const scale = max === min ? 0 : 255 / (max - min);
-  const pixels = new Uint8Array(width * height);
+  const autoStats = calculateFijiAutoLutStats(nativePixels, {
+    dataMin: min,
+    dataMax: max,
+  });
 
-  for (let index = 0; index < nativePixels.length; index++) {
-    const value = nativePixels[index];
-    pixels[index] = max === min
-      ? 128
-      : Math.max(0, Math.min(255, Math.round((value - min) * scale)));
-  }
-
-  return { nativePixels, pixels, min, max };
+  return {
+    nativePixels,
+    histogram: autoStats.histogram,
+    min,
+    max,
+    autoMin: autoStats.min,
+    autoMax: autoStats.max,
+  };
 }
 
 function createNativePlaneArray(

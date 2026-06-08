@@ -300,6 +300,8 @@ function reconcileChannels(maxChannels: number): void {
       index,
       enabled: previous?.enabled ?? layoutChannel?.enabled ?? true,
       color: previous?.color ?? layoutChannel?.color ?? DEFAULT_CHANNEL_COLORS[index % DEFAULT_CHANNEL_COLORS.length],
+      min: previous ? previous.min : layoutChannel?.min ?? null,
+      max: previous ? previous.max : layoutChannel?.max ?? null,
     };
   });
 }
@@ -401,8 +403,31 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
   const name = document.createElement("span");
   name.textContent = `C${channel.index}`;
 
-  label.append(checkbox, color, name);
+  const min = createThresholdInput(channel, "min");
+  const max = createThresholdInput(channel, "max");
+
+  label.append(checkbox, color, name, min, max);
   return label;
+}
+
+function createThresholdInput(
+  channel: ChannelRenderSettings,
+  key: "min" | "max",
+): HTMLInputElement {
+  const input = document.createElement("input");
+  input.type = "number";
+  input.inputMode = "decimal";
+  input.step = "1";
+  input.placeholder = `auto ${key}`;
+  input.value = formatThresholdInputValue(channel[key]);
+  input.disabled = !channel.enabled;
+  input.title = `C${channel.index} ${key} threshold`;
+  input.setAttribute("aria-label", `C${channel.index} ${key} threshold`);
+  input.addEventListener("input", () => {
+    channel[key] = parseOptionalNumber(input.value);
+    updateCachedChannelRendering();
+  });
+  return input;
 }
 
 async function runLimited<T>(
@@ -457,7 +482,10 @@ function formatPlaneSetSubtitle(
     : "none";
   const ranges = enabledRanges.length
     ? enabledRanges
-      .map((range) => `C${range.channelIndex} ${formatNumber(range.min)}-${formatNumber(range.max)}`)
+      .map((range) => {
+        const [thresholdMin, thresholdMax] = resolveChannelThresholdRange(channels[range.channelIndex], range);
+        return `C${range.channelIndex} data ${formatNumber(range.min)}-${formatNumber(range.max)} thr ${formatNumber(thresholdMin)}-${formatNumber(thresholdMax)}`;
+      })
       .join("; ")
     : "no channel ranges";
 
@@ -480,6 +508,33 @@ function formatTCZYX(shape: ZarrImageMetadata["shapeTCZYX"]): string {
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return String(value);
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toPrecision(4);
+}
+
+function formatThresholdInputValue(value: number | null): string {
+  return value === null ? "" : String(value);
+}
+
+function parseOptionalNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function resolveChannelThresholdRange(
+  channel: ChannelRenderSettings | undefined,
+  fallbackRange: { min: number; max: number; autoMin?: number; autoMax?: number },
+): [number, number] {
+  const autoMin = fallbackRange.autoMin ?? fallbackRange.min;
+  const autoMax = fallbackRange.autoMax ?? fallbackRange.max;
+  const min = channel?.min ?? autoMin;
+  let max = channel?.max ?? autoMax;
+
+  if (max <= min) {
+    max = min + 1;
+  }
+
+  return [min, max];
 }
 
 function formatUnitInterval(value: number): string {
@@ -553,13 +608,17 @@ function getFigureGridLayout(): FigureGridLayout {
   };
 }
 
-function getFigureLayoutChannelSettings(index: number): Pick<ChannelRenderSettings, "enabled" | "color"> | undefined {
+function getFigureLayoutChannelSettings(
+  index: number,
+): Pick<ChannelRenderSettings, "enabled" | "color" | "min" | "max"> | undefined {
   const lut = orchestraFigureLayout.lut_groups[0]?.channel_luts.find((channel) => channel.channel_idx === index);
   if (!lut) return undefined;
 
   return {
     enabled: lut.enabled,
     color: rgbToHex(lut.color),
+    min: parseOptionalNumber(lut.vmin),
+    max: parseOptionalNumber(lut.vmax),
   };
 }
 

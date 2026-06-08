@@ -1,7 +1,10 @@
-import type { ChannelRenderSettings, LoadedPlaneSet, RenderStats } from "./types";
+import type { ChannelRenderSettings, LoadedChannelPlane, LoadedPlaneSet, RenderStats } from "./types";
 
 const MAX_GPU_CHANNELS = 32;
-const CHANNEL_SETTINGS_FLOATS = (MAX_GPU_CHANNELS + 1) * 4;
+const COLOR_SETTINGS_OFFSET = 0;
+const THRESHOLD_SETTINGS_OFFSET = MAX_GPU_CHANNELS * 4;
+const DETAIL_SETTINGS_OFFSET = MAX_GPU_CHANNELS * 2 * 4;
+const CHANNEL_SETTINGS_FLOATS = (MAX_GPU_CHANNELS * 2 + 1) * 4;
 
 const SHADER = /* wgsl */ `
 const MAX_CHANNELS = ${MAX_GPU_CHANNELS}u;
@@ -13,6 +16,7 @@ struct VertexOut {
 
 struct ChannelSettings {
   colors: array<vec4f, ${MAX_GPU_CHANNELS}>,
+  thresholds: array<vec4f, ${MAX_GPU_CHANNELS}>,
   details: vec4f,
 };
 
@@ -36,19 +40,46 @@ fn vertexMain(@builtin(vertex_index) vertexIndex: u32) -> VertexOut {
   return out;
 }
 
-@group(0) @binding(0) var channelTexture: texture_2d_array<f32>;
-@group(0) @binding(1) var imageSampler: sampler;
-@group(0) @binding(2) var<uniform> channelSettings: ChannelSettings;
+@group(0) @binding(0) var channelTexture: texture_2d_array<u32>;
+@group(0) @binding(1) var<uniform> channelSettings: ChannelSettings;
+
+fn loadChannelTexel(channelIndex: u32, pixel: vec2i, dimensions: vec2u) -> f32 {
+  let maxPixel = vec2i(i32(dimensions.x) - 1, i32(dimensions.y) - 1);
+  let clampedPixel = clamp(pixel, vec2i(0, 0), maxPixel);
+  return f32(textureLoad(channelTexture, clampedPixel, i32(channelIndex), 0).r);
+}
+
+fn sampleChannelBilinear(channelIndex: u32, uv: vec2f, dimensions: vec2u) -> f32 {
+  let clampedUv = clamp(uv, vec2f(0.0), vec2f(1.0));
+  let sourcePosition = clampedUv * vec2f(f32(dimensions.x), f32(dimensions.y)) - vec2f(0.5);
+  let base = floor(sourcePosition);
+  let basePixel = vec2i(i32(base.x), i32(base.y));
+  let weight = sourcePosition - base;
+
+  let v00 = loadChannelTexel(channelIndex, basePixel, dimensions);
+  let v10 = loadChannelTexel(channelIndex, basePixel + vec2i(1, 0), dimensions);
+  let v01 = loadChannelTexel(channelIndex, basePixel + vec2i(0, 1), dimensions);
+  let v11 = loadChannelTexel(channelIndex, basePixel + vec2i(1, 1), dimensions);
+
+  return mix(
+    mix(v00, v10, weight.x),
+    mix(v01, v11, weight.x),
+    weight.y
+  );
+}
 
 @fragment
 fn fragmentMain(input: VertexOut) -> @location(0) vec4f {
   var color = vec3f(0.0);
   let channelCount = min(u32(channelSettings.details.x), MAX_CHANNELS);
+  let dimensions = textureDimensions(channelTexture);
 
   for (var channelIndex = 0u; channelIndex < channelCount; channelIndex = channelIndex + 1u) {
     let tint = channelSettings.colors[channelIndex];
     if (tint.a > 0.0) {
-      let value = textureSample(channelTexture, imageSampler, input.uv, i32(channelIndex)).r;
+      let thresholds = channelSettings.thresholds[channelIndex];
+      let rawValue = sampleChannelBilinear(channelIndex, input.uv, dimensions);
+      let value = clamp((rawValue - thresholds.x) / max(thresholds.y - thresholds.x, 0.000001), 0.0, 1.0);
       color = color + (value * tint.rgb * tint.a);
     }
   }
@@ -100,7 +131,22 @@ interface ImageTile {
   channelTexture: GPUTexture | null;
   settingsBuffer: GPUBuffer | null;
   channelCount: number;
+  channelRanges: TileChannelRange[];
   ready: boolean;
+}
+
+interface TileChannelRange {
+  channelIndex: number;
+  min: number;
+  max: number;
+  autoMin: number;
+  autoMax: number;
+}
+
+interface NativeTextureUploadInfo {
+  format: GPUTextureFormat;
+  bytesPerSample: number;
+  typeLabel: string;
 }
 
 export async function createImageGridRenderer(
@@ -128,7 +174,6 @@ export class ImageGridRenderer {
   private readonly onTileClick?: TileClickCallback;
   private readonly presentationFormat: GPUTextureFormat;
   private readonly pipeline: GPURenderPipeline;
-  private readonly sampler: GPUSampler;
   private readonly resizeObserver: ResizeObserver;
   private readonly intersectionObserver: IntersectionObserver;
   private readonly tiles = new Map<number, ImageTile>();
@@ -162,14 +207,6 @@ export class ImageGridRenderer {
         targets: [{ format: this.presentationFormat }],
       },
       primitive: { topology: "triangle-list" },
-    });
-
-    this.sampler = device.createSampler({
-      label: "image sampler",
-      magFilter: "linear",
-      minFilter: "linear",
-      addressModeU: "clamp-to-edge",
-      addressModeV: "clamp-to-edge",
     });
 
     this.resizeObserver = new ResizeObserver((entries) => this.onResize(entries));
@@ -270,6 +307,7 @@ export class ImageGridRenderer {
       channelTexture: null,
       settingsBuffer: null,
       channelCount: 0,
+      channelRanges: [],
       ready: false,
     };
 
@@ -313,6 +351,7 @@ export class ImageGridRenderer {
       return;
     }
 
+    const uploadInfo = getNativeTextureUploadInfo(channelPlanes);
     tile.channelTexture?.destroy();
     tile.settingsBuffer?.destroy();
     tile.channelTexture = this.device.createTexture({
@@ -322,16 +361,24 @@ export class ImageGridRenderer {
         height: planeSet.height,
         depthOrArrayLayers: channelPlanes.length,
       },
-      format: "r8unorm",
+      format: uploadInfo.format,
       usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     });
 
-    const bytesPerRow = alignTo(planeSet.width, 256);
+    const tightBytesPerRow = planeSet.width * uploadInfo.bytesPerSample;
+    const bytesPerRow = alignTo(tightBytesPerRow, 256);
     for (let layer = 0; layer < channelPlanes.length; layer++) {
       const plane = channelPlanes[layer];
-      const upload = bytesPerRow === planeSet.width
-        ? plane.pixels
-        : copySingleChannelWithAlignedRows(plane.pixels, planeSet.width, planeSet.height, bytesPerRow);
+      const sourceBytes = getTypedArrayBytes(plane.nativePixels);
+      const upload = bytesPerRow === tightBytesPerRow
+        ? sourceBytes
+        : copyNativePlaneWithAlignedRows(
+          sourceBytes,
+          planeSet.width,
+          planeSet.height,
+          uploadInfo.bytesPerSample,
+          bytesPerRow,
+        );
 
       this.device.queue.writeTexture(
         {
@@ -350,6 +397,13 @@ export class ImageGridRenderer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     tile.channelCount = channelPlanes.length;
+    tile.channelRanges = channelPlanes.map((plane) => ({
+      channelIndex: plane.channelIndex,
+      min: plane.min,
+      max: plane.max,
+      autoMin: plane.autoMin,
+      autoMax: plane.autoMax,
+    }));
     this.writeChannelSettings(tile, channels);
 
     tile.bindGroup = this.device.createBindGroup({
@@ -357,8 +411,7 @@ export class ImageGridRenderer {
       layout: this.pipeline.getBindGroupLayout(0),
       entries: [
         { binding: 0, resource: tile.channelTexture.createView({ dimension: "2d-array" }) },
-        { binding: 1, resource: this.sampler },
-        { binding: 2, resource: { buffer: tile.settingsBuffer } },
+        { binding: 1, resource: { buffer: tile.settingsBuffer } },
       ],
     });
 
@@ -380,7 +433,7 @@ export class ImageGridRenderer {
   private writeChannelSettings(tile: ImageTile, channels: readonly ChannelRenderSettings[]): void {
     if (!tile.settingsBuffer) return;
 
-    const data = createChannelSettingsData(tile.channelCount, channels);
+    const data = createChannelSettingsData(tile.channelRanges, channels);
     this.device.queue.writeBuffer(tile.settingsBuffer, 0, data);
   }
 
@@ -492,13 +545,14 @@ function alignTo(value: number, alignment: number): number {
   return Math.ceil(value / alignment) * alignment;
 }
 
-function copySingleChannelWithAlignedRows(
+function copyNativePlaneWithAlignedRows(
   source: Uint8Array,
   width: number,
   height: number,
+  bytesPerSample: number,
   bytesPerRow: number,
 ): Uint8Array {
-  const tightBytesPerRow = width;
+  const tightBytesPerRow = width * bytesPerSample;
   const aligned = new Uint8Array(bytesPerRow * height);
 
   for (let y = 0; y < height; y++) {
@@ -510,25 +564,87 @@ function copySingleChannelWithAlignedRows(
   return aligned;
 }
 
+function getNativeTextureUploadInfo(channelPlanes: readonly LoadedChannelPlane[]): NativeTextureUploadInfo {
+  const firstInfo = getPlaneTextureUploadInfo(channelPlanes[0]);
+
+  for (const plane of channelPlanes.slice(1)) {
+    const info = getPlaneTextureUploadInfo(plane);
+    if (info.format !== firstInfo.format) {
+      throw new Error(
+        `Mixed channel plane types are not supported in one GPU texture array. Got ${firstInfo.typeLabel} and ${info.typeLabel}.`,
+      );
+    }
+  }
+
+  return firstInfo;
+}
+
+function getPlaneTextureUploadInfo(plane: LoadedChannelPlane): NativeTextureUploadInfo {
+  const pixels = plane.nativePixels;
+  if (pixels instanceof Uint8Array || pixels instanceof Uint8ClampedArray) {
+    return { format: "r8uint", bytesPerSample: 1, typeLabel: pixels.constructor.name };
+  }
+
+  if (pixels instanceof Uint16Array) {
+    return { format: "r16uint", bytesPerSample: 2, typeLabel: pixels.constructor.name };
+  }
+
+  throw new Error(
+    `Unsupported native image type ${pixels.constructor.name}; this renderer currently supports Uint8 and Uint16 planes.`,
+  );
+}
+
+function getTypedArrayBytes(source: LoadedChannelPlane["nativePixels"]): Uint8Array {
+  return new Uint8Array(source.buffer, source.byteOffset, source.byteLength);
+}
+
 function createChannelSettingsData(
-  channelCount: number,
+  channelRanges: readonly TileChannelRange[],
   channels: readonly ChannelRenderSettings[],
 ): Float32Array {
   const data = new Float32Array(CHANNEL_SETTINGS_FLOATS);
+  const channelCount = Math.min(channelRanges.length, MAX_GPU_CHANNELS);
 
-  for (let index = 0; index < Math.min(channelCount, MAX_GPU_CHANNELS); index++) {
-    const channel = channels[index];
+  for (let index = 0; index < channelCount; index++) {
+    const channelRange = channelRanges[index];
+    const channel = channels[channelRange.channelIndex];
     const color = parseHexColor(channel?.color);
-    const offset = index * 4;
-    data[offset] = color[0];
-    data[offset + 1] = color[1];
-    data[offset + 2] = color[2];
-    data[offset + 3] = channel?.enabled ? 1 : 0;
+    const colorOffset = COLOR_SETTINGS_OFFSET + index * 4;
+    data[colorOffset] = color[0];
+    data[colorOffset + 1] = color[1];
+    data[colorOffset + 2] = color[2];
+    data[colorOffset + 3] = channel?.enabled ? 1 : 0;
+
+    const [thresholdMin, thresholdMax] = resolveThresholdRange(channel, channelRange);
+    const thresholdOffset = THRESHOLD_SETTINGS_OFFSET + index * 4;
+    data[thresholdOffset] = thresholdMin;
+    data[thresholdOffset + 1] = thresholdMax;
   }
 
-  const detailsOffset = MAX_GPU_CHANNELS * 4;
-  data[detailsOffset] = Math.min(channelCount, MAX_GPU_CHANNELS);
+  data[DETAIL_SETTINGS_OFFSET] = channelCount;
   return data;
+}
+
+function resolveThresholdRange(
+  channel: ChannelRenderSettings | undefined,
+  channelRange: TileChannelRange,
+): [number, number] {
+  const autoMin = getFiniteNumber(channelRange.autoMin, channelRange.min);
+  const autoMax = getFiniteNumber(channelRange.autoMax, channelRange.max);
+  const thresholdMin = getFiniteNumber(channel?.min, autoMin);
+  let thresholdMax = getFiniteNumber(channel?.max, autoMax);
+
+  if (thresholdMax <= thresholdMin) {
+    thresholdMax = thresholdMin + 1;
+  }
+
+  return [thresholdMin, thresholdMax];
+}
+
+function getFiniteNumber(value: number | null | undefined, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : fallback;
 }
 
 function parseHexColor(color = "#ffffff"): [number, number, number] {

@@ -425,7 +425,7 @@ function trimChannelPlaneCache(): void {
 }
 
 function getChannelPlaneByteLength(plane: LoadedChannelPlane): number {
-  return plane.nativePixels.byteLength + plane.pixels.byteLength;
+  return plane.nativePixels.byteLength + plane.histogram.bins.byteLength;
 }
 
 function mapDimensionName(name: string): DimensionAxis | null {

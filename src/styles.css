@@ -111,11 +111,11 @@ h1 {
 
 .channel-control {
   display: inline-grid;
-  grid-template-columns: auto 30px auto;
+  grid-template-columns: auto 30px 24px 64px 64px;
   align-items: center;
   gap: 6px;
-  height: 34px;
-  padding: 0 8px;
+  min-height: 34px;
+  padding: 4px 8px;
   border: 1px solid #d3dcd8;
   border-radius: 6px;
   background: #ffffff;
@@ -138,6 +138,22 @@ h1 {
   border: 1px solid #c8d2ce;
   border-radius: 4px;
   background: transparent;
+}
+
+.channel-control input[type="number"] {
+  width: 64px;
+  min-width: 0;
+  height: 24px;
+  padding: 2px 5px;
+  border: 1px solid #c8d2ce;
+  border-radius: 4px;
+  color: #263435;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.channel-control input[type="number"]::placeholder {
+  color: #7b898a;
 }
 
 .primary-button {

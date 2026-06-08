@@ -30,17 +30,29 @@ export interface ChannelRenderSettings {
   index: number;
   enabled: boolean;
   color: string;
+  min: number | null;
+  max: number | null;
 }
 
 export interface ChannelRange {
   channelIndex: number;
   min: number;
   max: number;
+  autoMin: number;
+  autoMax: number;
+}
+
+export interface ChannelHistogram {
+  bins: Int32Array;
+  min: number;
+  max: number;
+  binSize: number;
+  pixelCount: number;
 }
 
 export interface LoadedChannelPlane extends ChannelRange {
+  histogram: ChannelHistogram;
   nativePixels: NumericTypedArray;
-  pixels: Uint8Array;
   selection: ZarrSelection;
 }
 
