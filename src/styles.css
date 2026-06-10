@@ -347,7 +347,8 @@ h1 {
   grid-template-rows: auto 118px;
   overflow: hidden;
   border: 1px solid #d3dcd8;
-  border-radius: 8px;
+  /* Keep the top corners sharp so the image canvas is never clipped. */
+  border-radius: 0 0 8px 8px;
   background: #ffffff;
   box-shadow: 0 8px 24px rgba(23, 32, 33, 0.07);
 }

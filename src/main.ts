@@ -244,7 +244,7 @@ async function loadSources(): Promise<void> {
   await renderLoadedImages();
 }
 
-async function renderLoadedImages(): Promise<void> {
+async function renderLoadedImages(options: { isPlaybackFrame?: boolean } = {}): Promise<void> {
   const activeRenderer = renderer;
   if (!activeRenderer) return;
 
@@ -252,7 +252,12 @@ async function renderLoadedImages(): Promise<void> {
   if (imagesWithMetadata.length === 0) return;
 
   currentRenderAbortController?.abort();
-  abortPlaybackPrefetch();
+  // A playback frame consumes the cache that prefetch is filling, so it must not
+  // tear down the in-flight prefetch. Only user-initiated renders (scrub, Z, reload)
+  // invalidate prefetched frames.
+  if (!options.isPlaybackFrame) {
+    abortPlaybackPrefetch();
+  }
   closeActiveSettingsPopup?.();
   const abortController = new AbortController();
   currentRenderAbortController = abortController;
@@ -262,25 +267,23 @@ async function renderLoadedImages(): Promise<void> {
     ? `Rendering figure layout at Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`
     : `Rendering T${appState.currentT} Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`;
 
-  const tasks = imagesWithMetadata.map((imageState) => async (): Promise<void> => {
+  const tasks = imagesWithMetadata.map((imageState) => async (): Promise<LoadedPlaneSet | undefined> => {
     const { metadata } = imageState;
-    activeRenderer.setTileLoading(imageState.tileId, formatRenderSubtitle(metadata, "Loading"));
+    // During playback we keep the previous frame on screen until the new one is
+    // ready instead of flashing a loading state, which keeps the cadence smooth.
+    if (!options.isPlaybackFrame) {
+      activeRenderer.setTileLoading(imageState.tileId, formatRenderSubtitle(metadata, "Loading"));
+    }
 
     try {
-      imageState.planeSet = await loadChannelPlaneSet({
+      return await loadChannelPlaneSet({
         metadata,
         timeIndex: getImageTimeIndex(imageState),
         zIndex: appState.currentZ,
         signal: abortController.signal,
       });
-
-      const channels = getImageChannelSettings(imageState);
-      activeRenderer.uploadChannelPlanes(imageState.tileId, imageState.planeSet, channels);
-      activeRenderer.updateTile(imageState.tileId, {
-        subtitle: formatPlaneSetSubtitle(imageState.planeSet, channels),
-      });
     } catch (error) {
-      if (abortController.signal.aborted) return;
+      if (abortController.signal.aborted) return undefined;
       console.error(error);
       activeRenderer.setTileError(imageState.tileId, getErrorMessage(error));
       throw error;
@@ -290,13 +293,38 @@ async function renderLoadedImages(): Promise<void> {
   const results = await runLimited(tasks, 4);
   if (abortController.signal.aborted) return;
 
+  // Upload every loaded plane set in one synchronous pass. The renderer coalesces
+  // uploads into a single requestAnimationFrame, so all canvases update together
+  // instead of popping in one at a time as each load finishes.
+  let failed = 0;
+  for (let index = 0; index < imagesWithMetadata.length; index++) {
+    const result = results[index];
+    if (result.status === "rejected") {
+      failed++;
+      continue;
+    }
+    if (!result.value) continue;
+
+    const imageState = imagesWithMetadata[index];
+    imageState.planeSet = result.value;
+    const channels = getImageChannelSettings(imageState);
+    activeRenderer.uploadChannelPlanes(imageState.tileId, imageState.planeSet, channels);
+    activeRenderer.updateTile(imageState.tileId, {
+      subtitle: formatPlaneSetSubtitle(imageState.planeSet, channels),
+    });
+  }
+
   renderControls();
-  const failed = results.filter((result) => result.status === "rejected").length;
   const rendered = imagesWithMetadata.length - failed;
   statusText.textContent = failed
     ? `Rendered ${rendered}; ${failed} failed.`
     : `Rendered ${rendered} image${rendered === 1 ? "" : "s"}.`;
-  schedulePlaybackPrefetch();
+
+  if (options.isPlaybackFrame) {
+    ensurePlaybackPrefetch();
+  } else {
+    schedulePlaybackPrefetch();
+  }
 }
 
 function updateCachedChannelRendering(): void {
@@ -492,15 +520,19 @@ async function advancePlaybackFrame(): Promise<void> {
   }
 
   playbackFrameInFlight = true;
+  const frameStart = performance.now();
   try {
     appState.currentT = appState.currentT >= appState.maxTimeIndex
       ? 0
       : appState.currentT + 1;
     renderControls();
-    await renderLoadedImages();
+    await renderLoadedImages({ isPlaybackFrame: true });
   } finally {
     playbackFrameInFlight = false;
-    queueNextPlaybackFrame();
+    // Target a fixed cadence: when the render is faster than the frame interval
+    // (cache hits), wait out the remainder so the frame rate stays consistent.
+    const elapsed = performance.now() - frameStart;
+    queueNextPlaybackFrame(Math.max(0, PLAYBACK_FRAME_INTERVAL_MS - elapsed));
   }
 }
 
@@ -514,6 +546,18 @@ function schedulePlaybackPrefetch(): void {
   window.clearTimeout(prefetchTimer);
   prefetchTimer = 0;
   if (!appState.isPlaying || !isPlaybackAvailable()) return;
+
+  prefetchTimer = window.setTimeout(() => {
+    void prefetchPlaybackFrames();
+  }, PREFETCH_START_DELAY_MS);
+}
+
+// Start a prefetch round only if one is not already running or scheduled. Unlike
+// schedulePlaybackPrefetch this never aborts an in-flight round, so a playback
+// frame can let prefetch keep walking ahead instead of restarting it each frame.
+function ensurePlaybackPrefetch(): void {
+  if (!appState.isPlaying || !isPlaybackAvailable()) return;
+  if (prefetchAbortController || prefetchTimer) return;
 
   prefetchTimer = window.setTimeout(() => {
     void prefetchPlaybackFrames();
