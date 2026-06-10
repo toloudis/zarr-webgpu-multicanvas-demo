@@ -66,6 +66,63 @@ h1 {
   min-width: 0;
 }
 
+.dataset-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(86px, 1fr));
+  gap: 2px;
+  flex: 0 0 auto;
+  min-height: 40px;
+  margin: 0;
+  padding: 3px;
+  border: 1px solid #d3dcd8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.dataset-switch legend {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.dataset-switch label {
+  position: relative;
+  min-width: 0;
+}
+
+.dataset-switch input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dataset-switch span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  padding: 0 9px;
+  border-radius: 4px;
+  color: #405051;
+  font-size: 0.76rem;
+  font-weight: 780;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.dataset-switch input:checked + span {
+  background: #1d6f68;
+  color: #ffffff;
+}
+
+.dataset-switch input:focus-visible + span {
+  outline: 2px solid #1d6f68;
+  outline-offset: 2px;
+}
+
 .axis-controls {
   display: grid;
   grid-template-columns: repeat(3, minmax(150px, 1fr));

@@ -75,6 +75,7 @@ const zValue = requireElement<HTMLOutputElement>("#z-value");
 const resolutionSlider = requireElement<HTMLInputElement>("#resolution-slider");
 const resolutionValue = requireElement<HTMLOutputElement>("#resolution-value");
 const channelControls = requireElement<HTMLElement>("#channel-controls");
+const datasetModeInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[name='dataset-mode']"));
 
 const appState: AppState = {
   images: [],
@@ -116,6 +117,13 @@ resolutionSlider.addEventListener("input", () => {
   renderControls();
   scheduleResolutionReload();
 });
+for (const input of datasetModeInputs) {
+  input.addEventListener("change", () => {
+    if (!input.checked) return;
+
+    setDatasetMode(input.value === "figure");
+  });
+}
 
 async function init(): Promise<void> {
   renderer = await createImageGridRenderer(
@@ -341,6 +349,12 @@ function reconcileChannels(maxChannels: number): void {
 }
 
 function renderControls(): void {
+  for (const input of datasetModeInputs) {
+    input.checked = appState.usingFigureLayout
+      ? input.value === "figure"
+      : input.value === "sources";
+  }
+
   timeSlider.max = String(appState.maxTimeIndex);
   timeSlider.value = String(appState.currentT);
   timeSlider.disabled = appState.usingFigureLayout || appState.maxTimeIndex === 0;
@@ -360,6 +374,24 @@ function renderControls(): void {
   for (const channel of appState.channels) {
     channelControls.append(createChannelControl(channel));
   }
+}
+
+function setDatasetMode(usingFigureLayout: boolean): void {
+  if (appState.usingFigureLayout === usingFigureLayout) return;
+
+  appState.usingFigureLayout = usingFigureLayout;
+  appState.axesInitialized = false;
+  appState.currentT = 0;
+  appState.currentZ = 0;
+  appState.maxTimeIndex = 0;
+  appState.maxZIndex = 0;
+  appState.channels = [];
+  closeActiveSettingsPopup?.();
+  renderControls();
+  statusText.textContent = usingFigureLayout
+    ? "Switching to orchestra figure layout."
+    : "Switching to configured Zarr sources.";
+  void loadSources();
 }
 
 function scheduleResolutionReload(): void {

@@ -14,6 +14,18 @@
         </div>
 
         <div class="controls">
+          <fieldset class="dataset-switch" aria-label="Dataset source">
+            <legend>Dataset</legend>
+            <label>
+              <input type="radio" name="dataset-mode" value="sources" />
+              <span>Zarr sources</span>
+            </label>
+            <label>
+              <input type="radio" name="dataset-mode" value="figure" checked />
+              <span>Figure layout</span>
+            </label>
+          </fieldset>
+
           <div class="axis-controls" aria-label="Global slice controls">
             <label class="range-control" for="time-slider">
               <span>Time</span>
