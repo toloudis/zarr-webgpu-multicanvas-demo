@@ -1,5 +1,10 @@
 import "./styles.css";
-import { loadChannelPlaneSet, loadImageMetadata } from "./zarrLoader";
+import {
+  getZarrPlaneCacheStats,
+  loadChannelPlaneSet,
+  loadImageMetadata,
+  prefetchChannelPlaneSet,
+} from "./zarrLoader";
 import { orchestraFigureLayout } from "./orchestraFigureLayout";
 import { ZARR_IMAGE_SOURCES } from "./zarrSources";
 import type {
@@ -28,6 +33,10 @@ const DEFAULT_CHANNEL_COLORS = [
 ];
 const VOLE_VIEWER_URL = "https://vole.allencell.org/viewer";
 const USE_ORCHESTRA_FIGURE_LAYOUT = true;
+const PLAYBACK_FRAME_INTERVAL_MS = 350;
+const PREFETCH_START_DELAY_MS = 75;
+const PREFETCH_MAX_CONCURRENT_PLANE_SETS = 2;
+const PREFETCH_CACHE_HIGH_WATERMARK = 0.95;
 
 interface LoadedImageState {
   source: ZarrImageSource;
@@ -62,6 +71,7 @@ interface AppState {
   channels: ChannelRenderSettings[];
   axesInitialized: boolean;
   usingFigureLayout: boolean;
+  isPlaying: boolean;
 }
 
 const loadButton = requireElement<HTMLButtonElement>("#load-button");
@@ -74,6 +84,9 @@ const zSlider = requireElement<HTMLInputElement>("#z-slider");
 const zValue = requireElement<HTMLOutputElement>("#z-value");
 const resolutionSlider = requireElement<HTMLInputElement>("#resolution-slider");
 const resolutionValue = requireElement<HTMLOutputElement>("#resolution-value");
+const playButton = requireElement<HTMLButtonElement>("#play-button");
+const pauseButton = requireElement<HTMLButtonElement>("#pause-button");
+const stopButton = requireElement<HTMLButtonElement>("#stop-button");
 const channelControls = requireElement<HTMLElement>("#channel-controls");
 const datasetModeInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[name='dataset-mode']"));
 
@@ -87,12 +100,17 @@ const appState: AppState = {
   channels: [],
   axesInitialized: false,
   usingFigureLayout: USE_ORCHESTRA_FIGURE_LAYOUT,
+  isPlaying: false,
 };
 
 let renderer: ImageGridRenderer | undefined;
 let currentLoadAbortController: AbortController | undefined;
 let currentRenderAbortController: AbortController | undefined;
 let resolutionReloadTimer = 0;
+let playbackTimer = 0;
+let playbackFrameInFlight = false;
+let prefetchTimer = 0;
+let prefetchAbortController: AbortController | undefined;
 let closeActiveSettingsPopup: (() => void) | undefined;
 let activeSettingsPopupTileId: number | undefined;
 
@@ -101,7 +119,13 @@ init().catch((error) => {
   statusText.textContent = getErrorMessage(error);
 });
 
-loadButton.addEventListener("click", () => loadSources());
+loadButton.addEventListener("click", () => {
+  pausePlayback({ announce: false });
+  void loadSources();
+});
+playButton.addEventListener("click", () => startPlayback());
+pauseButton.addEventListener("click", () => pausePlayback());
+stopButton.addEventListener("click", () => stopPlayback());
 timeSlider.addEventListener("input", () => {
   appState.currentT = Number(timeSlider.value);
   renderControls();
@@ -146,6 +170,7 @@ async function loadSources(): Promise<void> {
   window.clearTimeout(resolutionReloadTimer);
   currentLoadAbortController?.abort();
   currentRenderAbortController?.abort();
+  abortPlaybackPrefetch();
   closeActiveSettingsPopup?.();
   const abortController = new AbortController();
   currentLoadAbortController = abortController;
@@ -227,6 +252,7 @@ async function renderLoadedImages(): Promise<void> {
   if (imagesWithMetadata.length === 0) return;
 
   currentRenderAbortController?.abort();
+  abortPlaybackPrefetch();
   closeActiveSettingsPopup?.();
   const abortController = new AbortController();
   currentRenderAbortController = abortController;
@@ -270,6 +296,7 @@ async function renderLoadedImages(): Promise<void> {
   statusText.textContent = failed
     ? `Rendered ${rendered}; ${failed} failed.`
     : `Rendered ${rendered} image${rendered === 1 ? "" : "s"}.`;
+  schedulePlaybackPrefetch();
 }
 
 function updateCachedChannelRendering(): void {
@@ -370,6 +397,11 @@ function renderControls(): void {
   resolutionSlider.value = String(appState.resolutionTarget);
   resolutionValue.value = `${appState.resolutionTarget} px`;
 
+  const playbackAvailable = isPlaybackAvailable();
+  playButton.disabled = !playbackAvailable || appState.isPlaying;
+  pauseButton.disabled = !appState.isPlaying;
+  stopButton.disabled = !playbackAvailable && appState.currentT === 0;
+
   channelControls.textContent = "";
   for (const channel of appState.channels) {
     channelControls.append(createChannelControl(channel));
@@ -379,6 +411,7 @@ function renderControls(): void {
 function setDatasetMode(usingFigureLayout: boolean): void {
   if (appState.usingFigureLayout === usingFigureLayout) return;
 
+  pausePlayback({ announce: false });
   appState.usingFigureLayout = usingFigureLayout;
   appState.axesInitialized = false;
   appState.currentT = 0;
@@ -394,8 +427,166 @@ function setDatasetMode(usingFigureLayout: boolean): void {
   void loadSources();
 }
 
+function startPlayback(): void {
+  if (!isPlaybackAvailable()) {
+    statusText.textContent = appState.usingFigureLayout
+      ? "Switch to Zarr sources to play through time."
+      : "Playback needs a loaded dataset with more than one timepoint.";
+    renderControls();
+    return;
+  }
+
+  if (appState.currentT >= appState.maxTimeIndex) {
+    appState.currentT = 0;
+  }
+
+  appState.isPlaying = true;
+  renderControls();
+  statusText.textContent = "Playing through time.";
+  schedulePlaybackPrefetch();
+  queueNextPlaybackFrame(0);
+}
+
+function pausePlayback(options: { announce?: boolean } = {}): void {
+  if (!appState.isPlaying && playbackTimer === 0 && prefetchTimer === 0 && !prefetchAbortController) return;
+
+  appState.isPlaying = false;
+  window.clearTimeout(playbackTimer);
+  playbackTimer = 0;
+  abortPlaybackPrefetch();
+  renderControls();
+
+  if (options.announce ?? true) {
+    statusText.textContent = `Paused at T${appState.currentT}.`;
+  }
+}
+
+function stopPlayback(): void {
+  const shouldRender = appState.currentT !== 0 && appState.images.some(hasMetadata);
+  pausePlayback({ announce: false });
+  appState.currentT = 0;
+  renderControls();
+  statusText.textContent = "Stopped playback.";
+
+  if (shouldRender) {
+    void renderLoadedImages();
+  }
+}
+
+function queueNextPlaybackFrame(delayMs = PLAYBACK_FRAME_INTERVAL_MS): void {
+  window.clearTimeout(playbackTimer);
+  if (!appState.isPlaying) return;
+
+  playbackTimer = window.setTimeout(() => {
+    void advancePlaybackFrame();
+  }, delayMs);
+}
+
+async function advancePlaybackFrame(): Promise<void> {
+  if (!appState.isPlaying || playbackFrameInFlight) return;
+
+  if (!isPlaybackAvailable()) {
+    pausePlayback({ announce: false });
+    statusText.textContent = "Playback stopped because time data is no longer available.";
+    return;
+  }
+
+  playbackFrameInFlight = true;
+  try {
+    appState.currentT = appState.currentT >= appState.maxTimeIndex
+      ? 0
+      : appState.currentT + 1;
+    renderControls();
+    await renderLoadedImages();
+  } finally {
+    playbackFrameInFlight = false;
+    queueNextPlaybackFrame();
+  }
+}
+
+function isPlaybackAvailable(): boolean {
+  return !appState.usingFigureLayout
+    && appState.maxTimeIndex > 0
+    && appState.images.some(hasMetadata);
+}
+
+function schedulePlaybackPrefetch(): void {
+  window.clearTimeout(prefetchTimer);
+  prefetchTimer = 0;
+  if (!appState.isPlaying || !isPlaybackAvailable()) return;
+
+  prefetchTimer = window.setTimeout(() => {
+    void prefetchPlaybackFrames();
+  }, PREFETCH_START_DELAY_MS);
+}
+
+async function prefetchPlaybackFrames(): Promise<void> {
+  abortPlaybackPrefetch();
+  if (!appState.isPlaying || !isPlaybackAvailable()) return;
+
+  const abortController = new AbortController();
+  prefetchAbortController = abortController;
+  const zIndex = appState.currentZ;
+  const metadata = appState.images.filter(hasMetadata).map((imageState) => imageState.metadata);
+  const timepoints = getPlaybackPrefetchTimepoints();
+  let prefetchedTimepoints = 0;
+
+  try {
+    for (const timeIndex of timepoints) {
+      if (abortController.signal.aborted || !isPlaybackAvailable()) return;
+      if (!appState.isPlaying) return;
+
+      const cacheStats = getZarrPlaneCacheStats();
+      if (
+        prefetchedTimepoints > 0
+        && cacheStats.bytes >= cacheStats.maxBytes * PREFETCH_CACHE_HIGH_WATERMARK
+      ) {
+        return;
+      }
+
+      const tasks = metadata.map((item) => async (): Promise<void> => {
+        await prefetchChannelPlaneSet({
+          metadata: item,
+          timeIndex,
+          zIndex,
+          signal: abortController.signal,
+        });
+      });
+      const results = await runLimited(tasks, PREFETCH_MAX_CONCURRENT_PLANE_SETS);
+      if (abortController.signal.aborted) return;
+
+      const failed = results.filter((result) => result.status === "rejected").length;
+      if (failed > 0) {
+        console.debug(`Prefetch skipped ${failed} plane set${failed === 1 ? "" : "s"} for T${timeIndex}.`);
+      }
+      prefetchedTimepoints++;
+    }
+  } finally {
+    if (prefetchAbortController === abortController) {
+      prefetchAbortController = undefined;
+    }
+  }
+}
+
+function getPlaybackPrefetchTimepoints(): number[] {
+  const frameCount = appState.maxTimeIndex + 1;
+  if (frameCount <= 1) return [];
+
+  return Array.from({ length: frameCount - 1 }, (_, index) => (
+    appState.currentT + index + 1
+  ) % frameCount);
+}
+
+function abortPlaybackPrefetch(): void {
+  window.clearTimeout(prefetchTimer);
+  prefetchTimer = 0;
+  prefetchAbortController?.abort();
+  prefetchAbortController = undefined;
+}
+
 function scheduleResolutionReload(): void {
   window.clearTimeout(resolutionReloadTimer);
+  pausePlayback({ announce: false });
   resolutionReloadTimer = window.setTimeout(() => {
     void loadSources();
   }, 350);

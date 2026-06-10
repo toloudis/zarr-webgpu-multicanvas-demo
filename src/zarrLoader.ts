@@ -155,6 +155,18 @@ export async function loadChannelPlaneSet({
   };
 }
 
+export async function prefetchChannelPlaneSet(options: LoadChannelPlaneSetOptions): Promise<void> {
+  await loadChannelPlaneSet(options);
+}
+
+export function getZarrPlaneCacheStats(): { bytes: number; maxBytes: number; entries: number } {
+  return {
+    bytes: channelPlaneCacheBytes,
+    maxBytes: MAX_CHANNEL_PLANE_CACHE_BYTES,
+    entries: channelPlaneCache.size,
+  };
+}
+
 function createRootLocation(source: ZarrImageSource): zarr.Location<zarr.FetchStore> {
   const store = new zarr.FetchStore(normalizeSourceUrl(source.url));
   return zarr.root(store);

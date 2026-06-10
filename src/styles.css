@@ -156,6 +156,18 @@ h1 {
   accent-color: #1d6f68;
 }
 
+.playback-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  min-height: 40px;
+  padding: 3px;
+  border: 1px solid #d3dcd8;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
 .channel-controls {
   display: flex;
   align-items: center;
@@ -220,6 +232,33 @@ h1 {
 }
 
 .channel-auto-button:disabled {
+  cursor: default;
+  opacity: 0.52;
+}
+
+.secondary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  min-width: 52px;
+  padding: 0 10px;
+  border: 1px solid #c8d2ce;
+  border-radius: 4px;
+  background: #f7faf8;
+  color: #405051;
+  font-size: 0.76rem;
+  font-weight: 780;
+  cursor: pointer;
+}
+
+.secondary-button:hover:not(:disabled) {
+  border-color: #1d6f68;
+  background: #dff1ed;
+  color: #1d6f68;
+}
+
+.secondary-button:disabled {
   cursor: default;
   opacity: 0.52;
 }
