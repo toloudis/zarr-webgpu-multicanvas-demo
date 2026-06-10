@@ -14,7 +14,7 @@ type ZarrArray = zarr.Array<zarr.DataType, zarr.Readable>;
 type ZarrGroup = zarr.Group<zarr.Readable>;
 
 const DEFAULT_ARRAY_PATH_CANDIDATES = ["0", "0/0", "s0"];
-const MAX_CHANNEL_PLANE_CACHE_BYTES = 512 * 1024 * 1024;
+const MAX_CHANNEL_PLANE_CACHE_BYTES = 4 * 1024 * 1024 * 1024;
 
 interface CachedChannelPlane {
   plane: LoadedChannelPlane;
@@ -34,6 +34,9 @@ interface LoadChannelPlaneSetOptions {
   metadata: ZarrImageMetadata;
   timeIndex: number;
   zIndex: number;
+  // When provided, only these channel indices are loaded. Used to skip channels
+  // that are globally disabled so playback does not fetch data it will not show.
+  channelIndices?: readonly number[];
   signal?: AbortSignal;
 }
 
@@ -67,8 +70,14 @@ export async function loadImageMetadata({
     resolutionTarget,
     signal,
   );
-  const dimensionOrder = normalizeDimensionOrder(arr, source.dimensionOrder ?? "TCZYX");
-  const compatArr = arr as ZarrArray & { chunkShape?: number[]; dataType?: string };
+  const dimensionOrder = normalizeDimensionOrder(
+    arr,
+    source.dimensionOrder ?? "TCZYX",
+  );
+  const compatArr = arr as ZarrArray & {
+    chunkShape?: number[];
+    dataType?: string;
+  };
 
   return {
     source,
@@ -87,6 +96,7 @@ export async function loadChannelPlaneSet({
   metadata,
   timeIndex,
   zIndex,
+  channelIndices,
   signal,
 }: LoadChannelPlaneSetOptions): Promise<LoadedPlaneSet> {
   throwIfAborted(signal);
@@ -94,18 +104,28 @@ export async function loadChannelPlaneSet({
   const width = metadata.shapeTCZYX.x;
   const height = metadata.shapeTCZYX.y;
   const sourceUrl = normalizeSourceUrl(metadata.source.url);
-  const channelPlaneSlots: Array<LoadedChannelPlane | undefined> = new Array(metadata.shapeTCZYX.c);
+  const channelPlaneSlots: Array<LoadedChannelPlane | undefined> = new Array(
+    metadata.shapeTCZYX.c,
+  );
   const loadTasks: Array<Promise<void>> = [];
+  const requestedChannels = resolveRequestedChannels(
+    channelIndices,
+    metadata.shapeTCZYX.c,
+  );
 
   let actualTimeIndex = clampIndex(timeIndex, metadata.shapeTCZYX.t);
   let actualZIndex = clampIndex(zIndex, metadata.shapeTCZYX.z);
 
-  for (let channelIndex = 0; channelIndex < metadata.shapeTCZYX.c; channelIndex++) {
-    const planeSelection = makePlaneSelection(metadata.arrayShape, metadata.dimensionOrder, {
-      timeIndex,
-      zIndex,
-      channelIndex,
-    });
+  for (const channelIndex of requestedChannels) {
+    const planeSelection = makePlaneSelection(
+      metadata.arrayShape,
+      metadata.dimensionOrder,
+      {
+        timeIndex,
+        zIndex,
+        channelIndex,
+      },
+    );
     const cacheKey = makeChannelPlaneCacheKey(metadata, planeSelection);
     const cachedPlane = getCachedChannelPlane(cacheKey);
 
@@ -155,11 +175,17 @@ export async function loadChannelPlaneSet({
   };
 }
 
-export async function prefetchChannelPlaneSet(options: LoadChannelPlaneSetOptions): Promise<void> {
+export async function prefetchChannelPlaneSet(
+  options: LoadChannelPlaneSetOptions,
+): Promise<void> {
   await loadChannelPlaneSet(options);
 }
 
-export function getZarrPlaneCacheStats(): { bytes: number; maxBytes: number; entries: number } {
+export function getZarrPlaneCacheStats(): {
+  bytes: number;
+  maxBytes: number;
+  entries: number;
+} {
   return {
     bytes: channelPlaneCacheBytes,
     maxBytes: MAX_CHANNEL_PLANE_CACHE_BYTES,
@@ -167,7 +193,9 @@ export function getZarrPlaneCacheStats(): { bytes: number; maxBytes: number; ent
   };
 }
 
-function createRootLocation(source: ZarrImageSource): zarr.Location<zarr.FetchStore> {
+function createRootLocation(
+  source: ZarrImageSource,
+): zarr.Location<zarr.FetchStore> {
   const store = new zarr.FetchStore(normalizeSourceUrl(source.url));
   return zarr.root(store);
 }
@@ -259,7 +287,10 @@ async function chooseBestCandidate(
     const arr = await tryOpenArray(path ? root.resolve(path) : root, signal);
     if (!arr) continue;
 
-    const dimensionOrder = normalizeDimensionOrder(arr, configuredDimensionOrder);
+    const dimensionOrder = normalizeDimensionOrder(
+      arr,
+      configuredDimensionOrder,
+    );
     candidates.push({
       arr,
       arrayPath: path,
@@ -289,7 +320,8 @@ function getCandidateTargetDimension(candidate: CandidateArray): number {
 
 function findMultiscaleArrayPaths(group: ZarrGroup): string[] {
   const omeAttrs = getRecordProperty(group.attrs, "ome");
-  const multiscales = group.attrs.multiscales ?? getRecordProperty(omeAttrs, "multiscales");
+  const multiscales =
+    group.attrs.multiscales ?? getRecordProperty(omeAttrs, "multiscales");
   if (!Array.isArray(multiscales)) return [];
 
   const paths: string[] = [];
@@ -309,7 +341,10 @@ function findMultiscaleArrayPaths(group: ZarrGroup): string[] {
   return Array.from(new Set(paths));
 }
 
-function normalizeDimensionOrder(arr: ZarrArray, dimensionOrder: string): DimensionAxis[] {
+function normalizeDimensionOrder(
+  arr: ZarrArray,
+  dimensionOrder: string,
+): DimensionAxis[] {
   const shape = Array.from(arr.shape ?? []);
   const names = Array.from(arr.dimensionNames ?? []);
   if (names.length === shape.length) {
@@ -317,8 +352,14 @@ function normalizeDimensionOrder(arr: ZarrArray, dimensionOrder: string): Dimens
     if (normalizedNames.every(isPresent)) return normalizedNames;
   }
 
-  const configuredOrder = dimensionOrder.toUpperCase().replace(/[^A-Z]/g, "").split("");
-  if (configuredOrder.length === shape.length && configuredOrder.every(isDimensionAxis)) {
+  const configuredOrder = dimensionOrder
+    .toUpperCase()
+    .replace(/[^A-Z]/g, "")
+    .split("");
+  if (
+    configuredOrder.length === shape.length &&
+    configuredOrder.every(isDimensionAxis)
+  ) {
     return configuredOrder;
   }
 
@@ -327,10 +368,15 @@ function normalizeDimensionOrder(arr: ZarrArray, dimensionOrder: string): Dimens
   if (shape.length === 4) return ["C", "Z", "Y", "X"];
   if (shape.length === 5) return ["T", "C", "Z", "Y", "X"];
 
-  throw new Error(`Cannot infer TCZYX dimension order for ${shape.length}D array.`);
+  throw new Error(
+    `Cannot infer TCZYX dimension order for ${shape.length}D array.`,
+  );
 }
 
-function makeTCZYXShape(shape: readonly number[], dimensionOrder: readonly DimensionAxis[]): TCZYXShape {
+function makeTCZYXShape(
+  shape: readonly number[],
+  dimensionOrder: readonly DimensionAxis[],
+): TCZYXShape {
   return {
     t: getAxisSize(shape, dimensionOrder, "T"),
     c: getAxisSize(shape, dimensionOrder, "C"),
@@ -346,7 +392,24 @@ function getAxisSize(
   axis: DimensionAxis,
 ): number {
   const axisIndex = dimensionOrder.indexOf(axis);
-  return axisIndex === -1 ? 1 : shape[axisIndex] ?? 1;
+  return axisIndex === -1 ? 1 : (shape[axisIndex] ?? 1);
+}
+
+function resolveRequestedChannels(
+  channelIndices: readonly number[] | undefined,
+  channelCount: number,
+): number[] {
+  if (!channelIndices) {
+    return Array.from({ length: channelCount }, (_, index) => index);
+  }
+
+  const unique = new Set<number>();
+  for (const index of channelIndices) {
+    if (Number.isInteger(index) && index >= 0 && index < channelCount) {
+      unique.add(index);
+    }
+  }
+  return Array.from(unique).sort((a, b) => a - b);
 }
 
 function makePlaneSelection(
@@ -384,13 +447,18 @@ function makePlaneSelection(
   }
 
   if (selection.filter((item) => item === null).length !== 2) {
-    throw new Error(`Dimension order must leave exactly Y and X unsliced. Got "${dimensionOrder.join("")}".`);
+    throw new Error(
+      `Dimension order must leave exactly Y and X unsliced. Got "${dimensionOrder.join("")}".`,
+    );
   }
 
   return { selection, timeIndex, zIndex, channelIndex };
 }
 
-function makeChannelPlaneCacheKey(metadata: ZarrImageMetadata, planeSelection: PlaneSelection): string {
+function makeChannelPlaneCacheKey(
+  metadata: ZarrImageMetadata,
+  planeSelection: PlaneSelection,
+): string {
   return [
     normalizeSourceUrl(metadata.source.url),
     metadata.multiresolutionLevel,
@@ -401,7 +469,9 @@ function makeChannelPlaneCacheKey(metadata: ZarrImageMetadata, planeSelection: P
   ].join("|");
 }
 
-function getCachedChannelPlane(cacheKey: string): LoadedChannelPlane | undefined {
+function getCachedChannelPlane(
+  cacheKey: string,
+): LoadedChannelPlane | undefined {
   const cached = channelPlaneCache.get(cacheKey);
   if (!cached) return undefined;
 
@@ -410,7 +480,10 @@ function getCachedChannelPlane(cacheKey: string): LoadedChannelPlane | undefined
   return cached.plane;
 }
 
-function setCachedChannelPlane(cacheKey: string, plane: LoadedChannelPlane): void {
+function setCachedChannelPlane(
+  cacheKey: string,
+  plane: LoadedChannelPlane,
+): void {
   const bytes = getChannelPlaneByteLength(plane);
   if (bytes > MAX_CHANNEL_PLANE_CACHE_BYTES) return;
 
@@ -441,7 +514,9 @@ function getChannelPlaneByteLength(plane: LoadedChannelPlane): number {
 }
 
 function mapDimensionName(name: string): DimensionAxis | null {
-  const clean = String(name).toLowerCase().replace(/[^a-z]/g, "");
+  const clean = String(name)
+    .toLowerCase()
+    .replace(/[^a-z]/g, "");
   if (clean === "t" || clean === "time") return "T";
   if (clean === "c" || clean === "channel" || clean === "channels") return "C";
   if (clean === "z" || clean === "depth" || clean === "plane") return "Z";
@@ -480,7 +555,13 @@ function getRecordProperty(value: unknown, key: string): unknown {
 }
 
 function isDimensionAxis(value: string): value is DimensionAxis {
-  return value === "T" || value === "C" || value === "Z" || value === "Y" || value === "X";
+  return (
+    value === "T" ||
+    value === "C" ||
+    value === "Z" ||
+    value === "Y" ||
+    value === "X"
+  );
 }
 
 function isPresent<T>(value: T | null | undefined): value is T {

@@ -267,6 +267,14 @@ async function renderLoadedImages(options: { isPlaybackFrame?: boolean } = {}): 
     ? `Rendering figure layout at Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`
     : `Rendering T${appState.currentT} Z${appState.currentZ} with ${selectedChannels} channel${selectedChannels === 1 ? "" : "s"}.`;
 
+  // During playback we only load channels that are enabled globally so disabled
+  // channels are never fetched. Interactive renders keep loading every channel so
+  // the per-image settings popup and instant channel toggles stay responsive.
+  const playbackChannelIndices = options.isPlaybackFrame ? getEnabledChannelIndices() : undefined;
+  const channelIndices = playbackChannelIndices && playbackChannelIndices.length > 0
+    ? playbackChannelIndices
+    : undefined;
+
   const tasks = imagesWithMetadata.map((imageState) => async (): Promise<LoadedPlaneSet | undefined> => {
     const { metadata } = imageState;
     // During playback we keep the previous frame on screen until the new one is
@@ -280,6 +288,7 @@ async function renderLoadedImages(options: { isPlaybackFrame?: boolean } = {}): 
         metadata,
         timeIndex: getImageTimeIndex(imageState),
         zIndex: appState.currentZ,
+        channelIndices,
         signal: abortController.signal,
       });
     } catch (error) {
@@ -568,6 +577,11 @@ async function prefetchPlaybackFrames(): Promise<void> {
   abortPlaybackPrefetch();
   if (!appState.isPlaying || !isPlaybackAvailable()) return;
 
+  // Skip channels disabled in the global settings so playback never prefetches
+  // data it will not display. Nothing enabled means nothing to prefetch.
+  const channelIndices = getEnabledChannelIndices();
+  if (channelIndices.length === 0) return;
+
   const abortController = new AbortController();
   prefetchAbortController = abortController;
   const zIndex = appState.currentZ;
@@ -593,6 +607,7 @@ async function prefetchPlaybackFrames(): Promise<void> {
           metadata: item,
           timeIndex,
           zIndex,
+          channelIndices,
           signal: abortController.signal,
         });
       });
@@ -932,7 +947,19 @@ function createChannelControl(channel: ChannelRenderSettings): HTMLElement {
     channel.enabled = checkbox.checked;
     applyGlobalChannelEnabled(channel.index, channel.enabled);
     renderControls();
-    updateCachedChannelRendering();
+
+    if (appState.isPlaying) {
+      updateCachedChannelRendering();
+      // The set of channels to prefetch changed; restart the round so newly enabled
+      // channels are fetched ahead (and disabled ones are dropped) during playback.
+      schedulePlaybackPrefetch();
+    } else if (checkbox.checked && !isChannelLoadedForAllImages(channel.index)) {
+      // Playback only loads enabled channels, so re-enabling one may need its data
+      // loaded before a shader-only update can show it.
+      void renderLoadedImages();
+    } else {
+      updateCachedChannelRendering();
+    }
   });
 
   const color = document.createElement("input");
@@ -1162,6 +1189,21 @@ function formatTCZYX(shape: ZarrImageMetadata["shapeTCZYX"]): string {
 function formatNumber(value: number): string {
   if (!Number.isFinite(value)) return String(value);
   return Math.abs(value) >= 1000 ? value.toFixed(0) : value.toPrecision(4);
+}
+
+function getEnabledChannelIndices(): number[] {
+  return appState.channels
+    .filter((channel) => channel.enabled)
+    .map((channel) => channel.index);
+}
+
+function isChannelLoadedForAllImages(channelIndex: number): boolean {
+  const imagesWithPlanes = appState.images.filter(hasCurrentPlaneSet);
+  if (imagesWithPlanes.length === 0) return false;
+
+  return imagesWithPlanes.every((imageState) => (
+    imageState.planeSet.channelPlanes.some((plane) => plane.channelIndex === channelIndex)
+  ));
 }
 
 function getImageChannelSettings(imageState: LoadedImageState): ChannelRenderSettings[] {
